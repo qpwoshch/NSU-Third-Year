@@ -2,7 +2,9 @@ package org.example;
 
 import java.io.IOException;
 import java.net.*;
+import java.util.Iterator;
 import java.util.Map;
+import java.util.Scanner;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -14,6 +16,7 @@ public class Multicast {
     private String protocol;
     InetAddress group;
     private MulticastSocket socket;
+    private volatile boolean isRunning = true;
 
     private final Map<String, NodeInfo> alive = new ConcurrentHashMap<>();
 
@@ -31,6 +34,9 @@ public class Multicast {
     }
 
     private void sendConfirmation() {
+        if (!isRunning) {
+            return;
+        }
         try {
             String myIP = InetAddress.getLocalHost().getHostAddress();
             long currentTime = System.currentTimeMillis();
@@ -50,18 +56,22 @@ public class Multicast {
                 try {
                     Thread.sleep(interval);
                 } catch (InterruptedException e) {
-                    break;
+                    Thread.currentThread().interrupt();
                 }
             }
         }).start();
     }
 
     private void receiveConfirmation() {
+        if (!isRunning) {
+            return;
+        }
         new Thread(() -> {
             byte[] buf = new byte[1024];
             DatagramPacket packet = new DatagramPacket(buf, buf.length);
             while (true) {
                 try {
+                    packet.setLength(buf.length);
                     socket.receive(packet);
                     String received = new String(packet.getData(), 0, packet.getLength());
                     String[] parts = received.split("\\|");
@@ -78,7 +88,9 @@ public class Multicast {
                     }
 
                 } catch (IOException e) {
-                    break;
+                    if (isRunning) {
+                        break;
+                    }
                 }
             }
         }).start();
@@ -96,9 +108,11 @@ public class Multicast {
             while (true) {
                 long thisMoment = System.currentTimeMillis();
                 boolean changed = false;
-                for (String id : alive.keySet()) {
-                    if (thisMoment - alive.get(id).lastSeen > 2 * interval) {
-                        alive.remove(id);
+                Iterator<Map.Entry<String, NodeInfo>> iterator = alive.entrySet().iterator();
+                while (iterator.hasNext()) {
+                    Map.Entry<String, NodeInfo> entry = iterator.next();
+                    if (thisMoment - entry.getValue().lastSeen > 2 * interval) {
+                        iterator.remove();
                         changed = true;
                     }
                 }
@@ -108,7 +122,27 @@ public class Multicast {
                 try {
                     Thread.sleep(interval);
                 } catch (InterruptedException e) {
-                    break;
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }).start();
+    }
+
+    private void listenForStopCommand() {
+        new Thread(() -> {
+            Scanner scanner = new Scanner(System.in);
+            System.out.println("If you want to end program enter \"stop\"");
+            while (isRunning) {
+                String input = scanner.nextLine();
+                if ("stop".equalsIgnoreCase(input)) {
+                    System.out.println("Stopping the program...");
+                    isRunning = false;
+                    try {
+                        socket.close();
+                    } catch (Exception e) {
+                        System.err.println("Error closing socket: " + e);
+                    }
+                    System.exit(0);
                 }
             }
         }).start();
@@ -127,6 +161,7 @@ public class Multicast {
             receiveConfirmation();
             startSend();
             startClean();
+            listenForStopCommand();
         } catch (UnknownHostException e) {
             System.err.println(groupAddr + " Incorrect address");
         } catch (IOException e) {
