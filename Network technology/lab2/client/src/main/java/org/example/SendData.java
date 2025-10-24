@@ -26,7 +26,8 @@ public class SendData {
             dataOutputStream.writeUTF(file.getName());
             dataOutputStream.writeLong(file.length());
             System.out.println("File name and size sent.");
-            byte[] buffer = new byte[1024];
+            int bufferSize = 1024;
+            byte[] buffer = new byte[bufferSize];
             int bytesRead;
             while ((bytesRead = fileInputStream.read(buffer)) != -1) {
                 dataOutputStream.write(buffer, 0, bytesRead);

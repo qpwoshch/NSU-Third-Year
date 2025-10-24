@@ -20,11 +20,15 @@ public class MonitorSpeed implements Runnable{
         long bytesAtTheTimeLastIteration = 0;
         while (isRunning) {
             try {
-                Thread.sleep(3000);
+                int timeSleep = 3000;
+                Thread.sleep(timeSleep);
                 long currentTime = System.currentTimeMillis();
                 long bytesOnThisInterval = allBytes - bytesAtTheTimeLastIteration;
-                long currentSpeed =  (bytesOnThisInterval / 3) / 1024 / 1024;
-                long averageSpeed =  (allBytes / ((currentTime - startTime) / 1000)) / 1024 / 1024;
+                double seconds = 3.0;
+                double kilobyteToByte = 1024.0;
+                double currentSpeed =  (bytesOnThisInterval / seconds) / kilobyteToByte / kilobyteToByte;
+                double secondsToMilliseconds = 1000.0;
+                double averageSpeed =  (allBytes / ((currentTime - startTime) / secondsToMilliseconds)) / kilobyteToByte / kilobyteToByte;
                 System.out.println("File: " + name + "\nCurrent speed: " + currentSpeed  + " mb, average speed: " + averageSpeed + " mb");
                 bytesAtTheTimeLastIteration = allBytes;
             } catch (InterruptedException e) {

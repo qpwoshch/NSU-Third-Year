@@ -55,14 +55,16 @@ public class DataReception {
                 sendError(socket, "Error: file size exceeds 1 TB limit. Transfer aborted.");
                 throw new IOException("File too large");
             }
-            System.out.println("File size: " + fileSize / 1024 / 1024 + " mb");
+            double kilobyteToByte = 1024.0;
+            System.out.println("File size: " + fileSize / kilobyteToByte / kilobyteToByte + " mb");
             File uploadsDir = new File("uploads");
             if (!uploadsDir.exists()) {
                 uploadsDir.mkdir();
             }
             File outputFile = new File(uploadsDir, fileName);
             fileOutputStream = new FileOutputStream(outputFile);
-            byte[] buffer = new byte[1024];
+            int bufferSize = 1024;
+            byte[] buffer = new byte[bufferSize];
             long remaining = fileSize;
             int bytesRead;
             while (remaining > 0) {
