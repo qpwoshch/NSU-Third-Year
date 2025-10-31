@@ -8,6 +8,7 @@ public class SendData {
     private int port;
     private final File file;
     private final InetAddress serverAddress;
+    private int bufferSize = 1024;
 
 
     public SendData(String path, String ip, String port) throws SocketException, UnknownHostException {
@@ -26,7 +27,6 @@ public class SendData {
             dataOutputStream.writeUTF(file.getName());
             dataOutputStream.writeLong(file.length());
             System.out.println("File name and size sent.");
-            int bufferSize = 1024;
             byte[] buffer = new byte[bufferSize];
             int bytesRead;
             while ((bytesRead = fileInputStream.read(buffer)) != -1) {
