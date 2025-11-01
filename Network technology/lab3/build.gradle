@@ -1,0 +1,39 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'org.example'
+version = '1.0-SNAPSHOT'
+
+
+
+repositories {
+    mavenCentral()
+    maven { url 'https://jitpack.io' }
+}
+
+application {
+    mainClass = "org.example.Main"
+}
+
+run {
+    jvmArgs = [
+            '--module-path', 'C:/Users/User/all_projects/java/javafx-sdk-24/lib',
+            '--add-modules', 'javafx.controls,javafx.fxml'
+    ]
+}
+
+dependencies {
+    implementation fileTree(dir: 'C:/Users/User/all_projects/java/javafx-sdk-24/lib', include: ['*.jar'])
+    implementation 'org.jsoup:jsoup:1.15.3'
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    implementation 'io.github.cdimascio:java-dotenv:5.2.2'
+    implementation 'org.json:json:20210307'
+}
+
+test {
+    useJUnitPlatform()
+}
+
