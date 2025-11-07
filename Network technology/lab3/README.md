@@ -13,5 +13,5 @@
 
 ## Для запуска:
 
-При запуске через IntelliJ IDEA нужно в параметрах запуска в VM Options указать путь до JavaFX.
-Создайте файл `.env` и добавьте туда API ключи для GraphHopper и OpenWeatherMap.
+1. При запуске через IntelliJ IDEA нужно в параметрах запуска в VM Options указать путь до JavaFX.
+2. Создайте файл `.env` и добавьте туда API ключи для GraphHopper и OpenWeatherMap.
