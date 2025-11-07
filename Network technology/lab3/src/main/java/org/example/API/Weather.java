@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 public class Weather {
     private String API = Dotenv.configure().load().get("openweathermap");
     private static final String websiteURL = "http://api.openweathermap.org/data/2.5/weather";
+    private int timeout = 5000;
 
 
     public String getWeather(double lat, double lng) {
@@ -32,8 +33,8 @@ public class Weather {
         URL url = new URL(urlString);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
-        connection.setConnectTimeout(5000);
-        connection.setReadTimeout(5000);
+        connection.setConnectTimeout(timeout);
+        connection.setReadTimeout(timeout);
         return connection;
     }
 
@@ -47,7 +48,7 @@ public class Weather {
         reader.close();
 
         JSONObject jsonResponse = new JSONObject(response.toString());
-        return jsonResponse.getJSONObject("main").getDouble("temp") + "°C";
+        return jsonResponse.getJSONObject("main").getDouble("temp") + "°C " + "Влажность: " + jsonResponse.getJSONObject("main").getDouble("humidity") + "% " + "Осадки: " + jsonResponse.getJSONArray("weather").getJSONObject(0).getString("description");
     }
 
 }

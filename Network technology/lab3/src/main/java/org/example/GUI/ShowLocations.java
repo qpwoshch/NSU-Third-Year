@@ -14,6 +14,7 @@ public class ShowLocations {
     private Map<Integer, Map<String, String>> locations;
     private final ButtonFromLocations listenerForButton;
 
+
     public ShowLocations(Map<Integer, Map<String, String>> locations, Stage stage, ButtonFromLocations listener) {
         this.listenerForButton = listener;
         this.stage = stage;
@@ -29,7 +30,9 @@ public class ShowLocations {
             locationButton.setOnAction(e -> listenerForButton.SearchInfo(dataOfLocation));
             vbox.getChildren().add(locationButton);
         }
-
+        Button menuButton = new Button("Вернуться в меню");
+        menuButton.setOnAction(e -> listenerForButton.showMenu());
+        vbox.getChildren().add(menuButton);
         Scene scene = new Scene(vbox, 450, 600);
         stage.setScene(scene);
         stage.setTitle("Локации");

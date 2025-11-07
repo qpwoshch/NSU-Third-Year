@@ -19,6 +19,7 @@ import org.json.JSONObject;
 public class Place {
     private String API = Dotenv.configure().load().get("graphhopeer");
     private static final String websiteUrl = "https://graphhopper.com/api/1/geocode";
+    private int timeout = 5000;
 
     public Map<Integer, Map<String, String>> search(String request) {
         Map<Integer, Map<String, String>> locations = new HashMap<>();
@@ -38,8 +39,8 @@ public class Place {
         URL url = new URL(urlString);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
-        connection.setConnectTimeout(5000);
-        connection.setReadTimeout(5000);
+        connection.setConnectTimeout(timeout);
+        connection.setReadTimeout(timeout);
         return connection;
     }
 
@@ -54,6 +55,7 @@ public class Place {
 
         JSONObject jsonResponse = new JSONObject(response.toString());
         JSONArray hits = jsonResponse.getJSONArray("hits");
+        System.out.println(hits.length());
         int maxSizeOfLocations = 10;
         for (int i = 0; i < hits.length() && i < maxSizeOfLocations; i++) {
             JSONObject hit = hits.getJSONObject(i);

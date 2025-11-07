@@ -15,7 +15,7 @@ import java.net.URLEncoder;
 
 public class Info {
     private static final String WEBSITE_URL = "https://ru.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=&titles=";
-
+    private int timeout = 150000;
     public String getInfo(String place) {
         try {
             String urlString = WEBSITE_URL + URLEncoder.encode(place, "UTF-8");
@@ -31,8 +31,8 @@ public class Info {
         URL url = new URL(urlString);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(15000);
+        connection.setConnectTimeout(timeout);
+        connection.setReadTimeout(timeout);
         connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
 
         return connection;
@@ -52,18 +52,14 @@ public class Info {
         try {
             JSONObject jsonResponse = new JSONObject(response.toString());
             JSONObject pages = jsonResponse.getJSONObject("query").getJSONObject("pages");
-
-            // Получаем первый ключ страницы (это ID страницы)
             String pageId = pages.keys().next();
             JSONObject page = pages.getJSONObject(pageId);
 
-            // Извлекаем текст из поля "extract", если он есть
             if (page.has("extract")) {
                 String rawExtract = page.getString("extract");
 
-                // Парсим HTML и извлекаем чистый текст
                 Document doc = Jsoup.parse(rawExtract);
-                return doc.text(); // Возвращаем чистый текст
+                return doc.text();
             }
         } catch (Exception e) {
             e.printStackTrace();

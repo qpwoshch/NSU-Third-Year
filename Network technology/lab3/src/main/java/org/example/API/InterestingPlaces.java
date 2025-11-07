@@ -15,6 +15,7 @@ import java.util.List;
 
 public class InterestingPlaces {
     private static final String websiteURL = "http://overpass-api.de/api/interpreter";
+    private int timeout = 5000;
 
     public List<String> getPlaces(double lat, double lng) {
         List<String> places = new ArrayList<>();
@@ -38,8 +39,8 @@ public class InterestingPlaces {
         URL url = new URL(urlString);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
-        connection.setConnectTimeout(5000);
-        connection.setReadTimeout(5000);
+        connection.setConnectTimeout(timeout);
+        connection.setReadTimeout(timeout);
         return connection;
     }
 

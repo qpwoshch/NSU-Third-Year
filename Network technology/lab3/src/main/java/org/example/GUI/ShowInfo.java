@@ -28,11 +28,11 @@ public class ShowInfo {
     public void show() {
         VBox vbox = new VBox(10);
         Label placeLabel = new Label("Место: " + place);
-
+        placeLabel.setStyle("-fx-font-size: 18px;");
         Label weatherLabel = new Label("Погода: " + weather);
 
         Label nearbyPlacesLabel = new Label("Места рядом:");
-        vbox.getChildren().add(nearbyPlacesLabel);
+        vbox.getChildren().addAll(placeLabel, weatherLabel, nearbyPlacesLabel);
 
         for (Map.Entry<String, String> entry : placesAndInfo.entrySet()) {
             Label placeInfoLabel = new Label(entry.getKey() + ": " + entry.getValue());
@@ -47,7 +47,7 @@ public class ShowInfo {
         Button menuButton = new Button("Вернуться в меню");
         menuButton.setOnAction(e -> listenerForButton.showMenu());
 
-        vbox.getChildren().addAll(placeLabel, weatherLabel, menuButton);
+        vbox.getChildren().add(menuButton);
 
         Scene scene = new Scene(vbox, 400, 600);
         stage.setScene(scene);
