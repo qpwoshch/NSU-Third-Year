@@ -24,7 +24,7 @@ public class Place {
     public Map<Integer, Map<String, String>> search(String request) {
         Map<Integer, Map<String, String>> locations = new HashMap<>();
         try {
-            String urlString = websiteUrl + "?q=" + URLEncoder.encode(request, "UTF-8") + "&key=" + API;
+            String urlString = websiteUrl + "?q=" + URLEncoder.encode(request, "UTF-8") + "&limit=10&key=" + API;
             HttpURLConnection connection = getConnect(urlString);
             readAnswer(connection, locations);
 
@@ -55,9 +55,7 @@ public class Place {
 
         JSONObject jsonResponse = new JSONObject(response.toString());
         JSONArray hits = jsonResponse.getJSONArray("hits");
-        System.out.println(hits.length());
-        int maxSizeOfLocations = 10;
-        for (int i = 0; i < hits.length() && i < maxSizeOfLocations; i++) {
+        for (int i = 0; i < hits.length(); i++) {
             JSONObject hit = hits.getJSONObject(i);
             Map<String, String> location = new HashMap<>();
             location.put("Название", hit.getString("name"));

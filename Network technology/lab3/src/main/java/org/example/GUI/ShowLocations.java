@@ -2,6 +2,7 @@ package org.example.GUI;
 
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
@@ -33,7 +34,10 @@ public class ShowLocations {
         Button menuButton = new Button("Вернуться в меню");
         menuButton.setOnAction(e -> listenerForButton.showMenu());
         vbox.getChildren().add(menuButton);
-        Scene scene = new Scene(vbox, 450, 600);
+        ScrollPane scrollPane = new ScrollPane();
+        scrollPane.setContent(vbox);
+        scrollPane.setFitToWidth(true);
+        Scene scene = new Scene(scrollPane, 450, 600);
         stage.setScene(scene);
         stage.setTitle("Локации");
         stage.show();
