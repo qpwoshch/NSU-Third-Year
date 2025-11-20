@@ -1,0 +1,97 @@
+package org.example;
+
+import java.io.IOException;
+import java.net.InetAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
+import java.net.InetSocketAddress;
+import java.util.Arrays;
+import java.nio.channels.SelectionKey;
+
+public class Connect {
+    private SocketChannel client;
+    private  Selector selector;
+    private  ByteBuffer buffer = ByteBuffer.allocate(512);
+    private SocketChannel remote = null;
+
+
+
+
+    public Connect(SocketChannel client, Selector selector) {
+        this.client = client;
+        this.selector = selector;
+    }
+
+
+    //TODO magic constant
+    public void connect(SelectionKey key) throws IOException {
+        int read = client.read(buffer);
+        if (read == -1) {
+            client.close();
+            return;
+        }
+        if (read == 0) {
+            return;
+        }
+        buffer.flip();
+        byte version = buffer.get();
+        byte command = buffer.get();
+        if (command != 0x01) {
+            System.out.println("Invalid command.");
+            client.close();
+            return;
+        }
+        byte reserve = buffer.get();
+        byte address = buffer.get();
+        String destAddress = "";
+        int destPort = 0;
+        switch (address) {
+            case 0x01:
+                byte[] ipv4 = new byte[4];
+                buffer.get(ipv4);
+                destAddress = InetAddress.getByAddress(ipv4).getHostAddress();
+                System.out.println("IPv4 address: " + destAddress);
+                break;
+            case 0x03:
+                byte domainLength = buffer.get();
+                byte[] domain = new byte[domainLength];
+                buffer.get(domain);
+                destAddress = new String(domain);
+                System.out.println("Domain address: " + destAddress);
+                break;
+            default:
+                System.out.println("Unsupported address type.");
+                client.close();
+                return;
+        }
+        byte firstByte = buffer.get();
+        byte secondByte = buffer.get();
+        destPort = ((firstByte & 0xFF) << 8) | (secondByte & 0xFF);
+        System.out.println("Destination: " + destAddress + ":" + destPort);
+        remote = SocketChannel.open();
+        remote.configureBlocking(false);
+        remote.connect(new InetSocketAddress(destAddress, destPort));
+        remote.register(selector, SelectionKey.OP_CONNECT, this);
+
+        key.interestOps(SelectionKey.OP_READ);
+        buffer.clear();
+    }
+
+    public void finishConnect(SelectionKey remoteKey) throws IOException {
+        if (!remote.finishConnect()) {
+            client.close();
+            remote.close();
+            return;
+        }
+
+        byte[] response = {0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        client.write(ByteBuffer.wrap(response));
+
+        Proxy proxy = new Proxy(client, remote);
+        client.register(selector, SelectionKey.OP_READ, proxy);
+        remote.register(selector, SelectionKey.OP_READ, proxy);
+
+        System.out.println("Tunnel is open");
+    }
+}
