@@ -17,6 +17,16 @@ public class Connect {
     private  ByteBuffer buffer = ByteBuffer.allocate(MAXSIZE);
     private SocketChannel remote = null;
     private final DNSResolver resolver;
+    private final int MASK = 0xFF;
+    private final byte CON = 0x01;
+    private final byte IPV4 = 0x01;
+    private final byte DNS = 0x03;
+    private final byte VER = 0x05;
+    private final byte REP = 0x00;
+    private final byte RSV = 0x00;
+    private final byte BINDADDR = 0x00;
+    private final byte BINDPORT = 0x00;
+    private final int IPV4SIZE = 4;
 
 
 
@@ -27,7 +37,6 @@ public class Connect {
     }
 
 
-    //TODO magic constant
     public void connect(SelectionKey key) throws IOException {
         int read = client.read(buffer);
         if (read == -1) {
@@ -48,7 +57,7 @@ public class Connect {
         }
         buffer.get();
         byte command = buffer.get();
-        if (command != 0x01) {
+        if (command != CON) {
             System.out.println("Invalid command.");
             client.close();
             return;
@@ -58,18 +67,18 @@ public class Connect {
         String destAddress = "";
         int destPort = 0;
         switch (address) {
-            case 0x01:
-                byte[] ipv4 = new byte[4];
-                buffer.get(ipv4);
-                destAddress = InetAddress.getByAddress(ipv4).getHostAddress();
+            case IPV4:
+                byte[] IPV4 = new byte[IPV4SIZE];
+                buffer.get(IPV4);
+                destAddress = InetAddress.getByAddress(IPV4).getHostAddress();
                 System.out.println("IPv4 address: " + destAddress);
                 break;
-            case 0x03:
+            case DNS:
                 byte len = buffer.get();
                 byte[] bytes = new byte[len];
                 buffer.get(bytes);
                 String domain = new String(bytes, StandardCharsets.US_ASCII).toLowerCase();
-                int domainPort = (buffer.get() & 0xFF) << 8 | (buffer.get() & 0xFF);
+                int domainPort = (buffer.get() & MASK) << 8 | (buffer.get() & MASK);
                 resolver.resolve(domain, domainPort, this, key);
                 buffer.clear();
                 return;
@@ -80,7 +89,7 @@ public class Connect {
         }
         byte firstByte = buffer.get();
         byte secondByte = buffer.get();
-        destPort = ((firstByte & 0xFF) << 8) | (secondByte & 0xFF);
+        destPort = ((firstByte & MASK) << 8) | (secondByte & MASK);
         System.out.println("Destination: " + destAddress + ":" + destPort);
         remote = SocketChannel.open();
         remote.configureBlocking(false);
@@ -98,7 +107,7 @@ public class Connect {
             return;
         }
 
-        byte[] response = {0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        byte[] response = {VER, REP, RSV, IPV4, BINDADDR, BINDADDR, BINDADDR, BINDADDR, BINDPORT, BINDPORT};
         client.write(ByteBuffer.wrap(response));
 
         Proxy proxy = new Proxy(client, remote);

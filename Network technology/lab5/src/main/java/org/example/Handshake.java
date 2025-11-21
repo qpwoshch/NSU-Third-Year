@@ -9,6 +9,8 @@ public class Handshake {
     private ByteBuffer buffer = ByteBuffer.allocate(256);
     private final SocketChannel client;
     private final DNSResolver resolver;
+    private final byte VERSION = 0x05;
+    private final byte SUCCESS = 0x00;
 
     public Handshake(SocketChannel client, DNSResolver resolver) {
         this.client = client;
@@ -30,7 +32,7 @@ public class Handshake {
         }
         buffer.position(buffer.position() +nmethods);
 
-        byte[] response = {0x05, 0x00};
+        byte[] response = {VERSION, SUCCESS};
         client.write(ByteBuffer.wrap(response));
 
         key.attach(new Connect(client, key.selector(), resolver));
