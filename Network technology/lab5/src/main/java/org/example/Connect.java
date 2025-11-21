@@ -6,6 +6,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.nio.channels.SelectionKey;
 
@@ -15,13 +16,14 @@ public class Connect {
     private int MAXSIZE = 512;
     private  ByteBuffer buffer = ByteBuffer.allocate(MAXSIZE);
     private SocketChannel remote = null;
+    private final DNSResolver resolver;
 
 
 
-
-    public Connect(SocketChannel client, Selector selector) {
+    public Connect(SocketChannel client, Selector selector, DNSResolver resolver) {
         this.client = client;
         this.selector = selector;
+        this.resolver = resolver;
     }
 
 
@@ -63,12 +65,14 @@ public class Connect {
                 System.out.println("IPv4 address: " + destAddress);
                 break;
             case 0x03:
-                byte domainLength = buffer.get();
-                byte[] domain = new byte[domainLength];
-                buffer.get(domain);
-                destAddress = new String(domain);
-                System.out.println("Domain address: " + destAddress);
-                break;
+                byte len = buffer.get();
+                byte[] bytes = new byte[len];
+                buffer.get(bytes);
+                String domain = new String(bytes, StandardCharsets.US_ASCII).toLowerCase();
+                int domainPort = (buffer.get() & 0xFF) << 8 | (buffer.get() & 0xFF);
+                resolver.resolve(domain, domainPort, this, key);
+                buffer.clear();
+                return;
             default:
                 System.out.println("Unsupported address type.");
                 client.close();
@@ -102,5 +106,13 @@ public class Connect {
         remote.register(selector, SelectionKey.OP_READ, proxy);
 
         System.out.println("Tunnel is open");
+    }
+
+    public void continueWithIp(InetAddress ip, int port, SelectionKey clientKey) throws IOException {
+        this.remote = SocketChannel.open();
+        this.remote.configureBlocking(false);
+        this.remote.connect(new InetSocketAddress(ip, port));
+        this.remote.register(selector, SelectionKey.OP_CONNECT, this);
+
     }
 }

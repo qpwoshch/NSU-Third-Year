@@ -12,6 +12,7 @@
     public class MySelector {
         private Integer port;
         public static final ThreadLocal<ByteBuffer> TRANSFER_BUFFER = ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(32768));
+        private DNSResolver resolver;
 
         public MySelector(Integer port) {
             this.port = port;
@@ -23,6 +24,7 @@
             serverSocketChannel.configureBlocking(false);
             Selector selector = Selector.open();
             serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+            resolver = new DNSResolver(selector);
             while (true) {
                 selector.select();
                 for (SelectionKey key : selector.selectedKeys()) {
@@ -38,7 +40,7 @@
                                 continue;
                             }
                             client.configureBlocking(false);
-                            client.register(selector, SelectionKey.OP_READ, new Handshake(client));
+                            client.register(selector, SelectionKey.OP_READ, new Handshake(client, resolver));
                             System.out.println("Client: " + client.getRemoteAddress());
                         }
                         if (key.isConnectable()) {
@@ -46,6 +48,10 @@
                         }
                         if (key.isReadable()) {
                             Object att = key.attachment();
+                            if (att instanceof DNSResolver dns) {
+                                dns.read();
+                                continue;
+                            }
                             if (att instanceof Handshake handshake) {
                                 handshake.doHandshake(key);
                             }

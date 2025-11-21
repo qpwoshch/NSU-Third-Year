@@ -8,9 +8,11 @@ import java.nio.channels.SocketChannel;
 public class Handshake {
     private ByteBuffer buffer = ByteBuffer.allocate(256);
     private final SocketChannel client;
+    private final DNSResolver resolver;
 
-    public Handshake(SocketChannel client) {
+    public Handshake(SocketChannel client, DNSResolver resolver) {
         this.client = client;
+        this.resolver = resolver;
     }
 
     public void doHandshake(SelectionKey key) throws IOException {
@@ -31,7 +33,7 @@ public class Handshake {
         byte[] response = {0x05, 0x00};
         client.write(ByteBuffer.wrap(response));
 
-        key.attach(new Connect(client, key.selector()));
+        key.attach(new Connect(client, key.selector(), resolver));
         buffer.clear();
     }
 }
