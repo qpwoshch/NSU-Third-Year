@@ -5,10 +5,11 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
+import static org.example.MySelector.TRANSFER_BUFFER;
+
 public class Proxy {
     private final SocketChannel client;
     private final SocketChannel remote;
-    private final ByteBuffer buffer = ByteBuffer.allocate(16384);
 
     public Proxy(SocketChannel client, SocketChannel remote) {
         this.client = client;
@@ -24,6 +25,7 @@ public class Proxy {
         else {
             to = client;
         }
+        ByteBuffer buffer = TRANSFER_BUFFER.get();
         buffer.clear();
         int read = from.read(buffer);
         if (read == -1) {

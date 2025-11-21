@@ -2,6 +2,7 @@
 
     import java.io.IOException;
     import java.net.InetSocketAddress;
+    import java.nio.ByteBuffer;
     import java.nio.channels.SelectionKey;
     import java.nio.channels.Selector;
     import java.nio.channels.ServerSocketChannel;
@@ -10,6 +11,7 @@
 
     public class MySelector {
         private Integer port;
+        public static final ThreadLocal<ByteBuffer> TRANSFER_BUFFER = ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(32768));
 
         public MySelector(Integer port) {
             this.port = port;

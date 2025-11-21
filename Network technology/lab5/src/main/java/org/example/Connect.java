@@ -12,7 +12,8 @@ import java.nio.channels.SelectionKey;
 public class Connect {
     private SocketChannel client;
     private  Selector selector;
-    private  ByteBuffer buffer = ByteBuffer.allocate(512);
+    private int MAXSIZE = 512;
+    private  ByteBuffer buffer = ByteBuffer.allocate(MAXSIZE);
     private SocketChannel remote = null;
 
 
@@ -34,15 +35,23 @@ public class Connect {
         if (read == 0) {
             return;
         }
+        if (buffer.position() > MAXSIZE) {
+            client.close();
+            return;
+        }
         buffer.flip();
-        byte version = buffer.get();
+        if (buffer.remaining() < 10) {
+            buffer.compact();
+            return;
+        }
+        buffer.get();
         byte command = buffer.get();
         if (command != 0x01) {
             System.out.println("Invalid command.");
             client.close();
             return;
         }
-        byte reserve = buffer.get();
+        buffer.get();
         byte address = buffer.get();
         String destAddress = "";
         int destPort = 0;

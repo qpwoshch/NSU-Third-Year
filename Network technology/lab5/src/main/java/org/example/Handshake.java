@@ -16,10 +16,17 @@ public class Handshake {
     public void doHandshake(SelectionKey key) throws IOException {
         client.read(buffer);
         buffer.flip();
-
+        if (buffer.remaining() < 3) {
+            buffer.compact();
+            return;
+        }
         buffer.get();
-        int countMethods = buffer.get();
-        buffer.position(buffer.position() +countMethods);
+        int nmethods = buffer.get();
+        if (buffer.remaining() < nmethods) {
+            buffer.compact();
+            return;
+        }
+        buffer.position(buffer.position() +nmethods);
 
         byte[] response = {0x05, 0x00};
         client.write(ByteBuffer.wrap(response));
