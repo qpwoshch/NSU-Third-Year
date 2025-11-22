@@ -20,6 +20,7 @@ public class Connect {
     private final int MASK = 0xFF;
     private final byte CON = 0x01;
     private final byte IPV4 = 0x01;
+    private final byte IPV6 = 0x04;
     private final byte DNS = 0x03;
     private final byte VER = 0x05;
     private final byte REP = 0x00;
@@ -27,6 +28,7 @@ public class Connect {
     private final byte BINDADDR = 0x00;
     private final byte BINDPORT = 0x00;
     private final int IPV4SIZE = 4;
+    private final int IPV6SIZE = 16;
 
 
 
@@ -68,10 +70,16 @@ public class Connect {
         int destPort = 0;
         switch (address) {
             case IPV4:
-                byte[] IPV4 = new byte[IPV4SIZE];
-                buffer.get(IPV4);
-                destAddress = InetAddress.getByAddress(IPV4).getHostAddress();
+                byte[] ipv4 = new byte[IPV4SIZE];
+                buffer.get(ipv4);
+                destAddress = InetAddress.getByAddress(ipv4).getHostAddress();
                 System.out.println("IPv4 address: " + destAddress);
+                break;
+            case IPV6:
+                byte[] ipv6 = new byte[IPV6SIZE];
+                buffer.get(ipv6);
+                destAddress = InetAddress.getByAddress(ipv6).getHostAddress();
+                System.out.println("IPv6 address: " + destAddress);
                 break;
             case DNS:
                 byte len = buffer.get();
@@ -122,6 +130,5 @@ public class Connect {
         this.remote.configureBlocking(false);
         this.remote.connect(new InetSocketAddress(ip, port));
         this.remote.register(selector, SelectionKey.OP_CONNECT, this);
-
     }
 }
