@@ -10,10 +10,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.nio.channels.SelectionKey;
 
-public class Connect {
-    private SocketChannel client;
-    private  Selector selector;
-    private int MAXSIZE = 512;
+public class Connect implements Attachment {
+    private final SocketChannel client;
+    private final Selector selector;
+    private final int MAXSIZE = 512;
     private  ByteBuffer buffer = ByteBuffer.allocate(MAXSIZE);
     private SocketChannel remote = null;
     private final DNSResolver resolver;
@@ -23,6 +23,7 @@ public class Connect {
     private final byte IPV6 = 0x04;
     private final byte DNS = 0x03;
     private final byte VER = 0x05;
+    private final byte REP_GENERAL_FAILURE = 0x01;
     private final byte REP = 0x00;
     private final byte RSV = 0x00;
     private final byte BINDADDR = 0x00;
@@ -38,10 +39,16 @@ public class Connect {
         this.resolver = resolver;
     }
 
+    @Override
+    public void handle(SelectionKey key) throws Exception {
+        connect(key);
+    }
+
 
     public void connect(SelectionKey key) throws IOException {
         int read = client.read(buffer);
         if (read == -1) {
+            System.out.println("[Handshake] Client " + client.getRemoteAddress() + " closed connection (EOF)");
             client.close();
             return;
         }
@@ -49,7 +56,8 @@ public class Connect {
             return;
         }
         if (buffer.position() > MAXSIZE) {
-            client.close();
+            System.out.println("[ERROR] Client " + client.getRemoteAddress() + " exceeded maximum request size (" + buffer.position() + " > " + MAXSIZE + ")");
+            sendError();
             return;
         }
         buffer.flip();
@@ -57,10 +65,15 @@ public class Connect {
             buffer.compact();
             return;
         }
-        buffer.get();
+        byte version = buffer.get();
+        if (version != VER) {
+            System.err.println("Invalid version");
+            client.close();
+            return;
+        }
         byte command = buffer.get();
         if (command != CON) {
-            System.out.println("Invalid command.");
+            System.err.println("Invalid command.");
             client.close();
             return;
         }
@@ -82,12 +95,27 @@ public class Connect {
                 System.out.println("IPv6 address: " + destAddress);
                 break;
             case DNS:
+                if (buffer.remaining() < 1) {
+                    buffer.position(buffer.position() - 4);
+                    buffer.compact();
+                    return;
+                }
                 byte len = buffer.get();
+                if (len == 0 || len > 255) {
+                    System.err.println("Invalid domain length: " + len);
+                    sendError();
+                    return;
+                }
                 byte[] bytes = new byte[len];
                 buffer.get(bytes);
                 String domain = new String(bytes, StandardCharsets.US_ASCII).toLowerCase();
                 int domainPort = (buffer.get() & MASK) << 8 | (buffer.get() & MASK);
-                resolver.resolve(domain, domainPort, this, key);
+                if (!resolver.resolve(domain, domainPort, this, key)) {
+                    sendError();
+                    System.err.println("Failed to send DNS query for: " + domain);
+                    buffer.clear();
+                    return;
+                }
                 buffer.clear();
                 return;
             default:
@@ -98,20 +126,44 @@ public class Connect {
         byte firstByte = buffer.get();
         byte secondByte = buffer.get();
         destPort = ((firstByte & MASK) << 8) | (secondByte & MASK);
+        if (destPort == 0) {
+            System.err.println("Invalid port: 0 (client: " + client.getRemoteAddress() + ")");
+            sendError();
+            return;
+        }
         System.out.println("Destination: " + destAddress + ":" + destPort);
         remote = SocketChannel.open();
         remote.configureBlocking(false);
         remote.connect(new InetSocketAddress(destAddress, destPort));
-        remote.register(selector, SelectionKey.OP_CONNECT, this);
-
+        boolean connectedImmediately = !remote.isConnectionPending();
+        if (connectedImmediately) {
+            finishConnect(remote.register(selector, 0, this));
+        } else {
+            remote.register(selector, SelectionKey.OP_CONNECT, this);
+        }
         key.interestOps(SelectionKey.OP_READ);
         buffer.clear();
     }
 
+
+    public void sendError() throws IOException {
+        byte[] errorResponse = {VER, REP_GENERAL_FAILURE, RSV, IPV4, BINDADDR, BINDADDR, BINDADDR, BINDADDR, BINDPORT, BINDPORT};
+        try {
+            client.write(ByteBuffer.wrap(errorResponse));
+        } catch (IOException ignored) {}
+        client.close();
+    }
+
     public void finishConnect(SelectionKey remoteKey) throws IOException {
-        if (!remote.finishConnect()) {
-            client.close();
-            remote.close();
+        try {
+            if (!remote.finishConnect()) {
+                System.err.println("finishConnect() returned false (should not happen)");
+                sendError();
+                return;
+            }
+        } catch (Exception e) {
+            System.err.println("Connect failed to " + remote.socket().getInetAddress() + ":" + remote.socket().getPort() + " — " + e);
+            sendError();
             return;
         }
 
