@@ -15,7 +15,7 @@ public class GameController {
 
     private static final String MULTICAST_ADDRESS = "239.192.0.4";
     private static final int MULTICAST_PORT = 9192;
-
+    private final Map<InetSocketAddress, Integer> processedJoins;
     private volatile GameState gameState;
     private volatile GameConfig config;
     private volatile NodeRole myRole;
@@ -60,6 +60,7 @@ public class GameController {
         this.playerIdCounter = new AtomicInteger(1);
         this.availableGames = new ConcurrentHashMap<>();
         this.playerLastActivity = new ConcurrentHashMap<>();
+        this.processedJoins = new ConcurrentHashMap<>();
     }
 
     public void setStateUpdateCallback(Consumer<GameState> callback) {
@@ -256,6 +257,7 @@ public class GameController {
         gameState = null;
         myRole = null;
         playerLastActivity.clear();
+        processedJoins.clear(); // Добавить
     }
 
     private void gameTick() {
@@ -542,7 +544,12 @@ public class GameController {
         Player player = gameState.getPlayer(playerId);
         if (player == null) return;
 
-        System.out.println("Player " + playerId + " timed out");
+        System.out.println("[GAME] Player " + playerId + " timed out");
+
+        // Удаляем из processedJoins
+        if (player.getAddress() != null) {
+            processedJoins.remove(player.getAddress());
+        }
 
         if (player.getRole() == NodeRole.DEPUTY) {
             deputyAddress = null;
@@ -551,13 +558,12 @@ public class GameController {
         Snake snake = gameState.getSnake(playerId);
         if (snake != null && snake.getState() == Snake.SnakeState.ALIVE) {
             snake.setState(Snake.SnakeState.ZOMBIE);
-            System.out.println("Snake of player " + playerId + " became ZOMBIE");
+            System.out.println("[GAME] Snake of player " + playerId + " became ZOMBIE");
         }
 
         player.setRole(NodeRole.VIEWER);
         playerLastActivity.remove(playerId);
 
-        // Если был DEPUTY, назначаем нового
         ensureDeputy();
     }
 
@@ -633,10 +639,10 @@ public class GameController {
     private void handleAck(SnakesProto.GameMessage msg) {
         unackedMessages.remove(msg.getMsgSeq());
 
-        // Если это ответ на JoinMsg - сохраняем свой ID
-        if (msg.hasReceiverId() && myId == 0) {
+        // Если это ответ на JoinMsg - сохраняем свой ID (только если ещё не установлен)
+        if (msg.hasReceiverId() && msg.getReceiverId() > 0 && myId <= 0) {
             myId = msg.getReceiverId();
-            System.out.println("Received my ID: " + myId);
+            System.out.println("[GAME] Received my ID: " + myId);
         }
 
         if (msg.hasSenderId()) {
@@ -668,7 +674,37 @@ public class GameController {
 
         SnakesProto.GameMessage.JoinMsg join = msg.getJoin();
 
-        System.out.println("Player joining: " + join.getPlayerName() + " from " + sender);
+        System.out.println("[GAME] Player joining: " + join.getPlayerName() + " from " + sender);
+
+        // Проверяем не обрабатывали ли мы уже этот запрос
+        Integer existingPlayerId = processedJoins.get(sender);
+        if (existingPlayerId != null) {
+            // Уже обработали - просто отправляем ACK повторно
+            System.out.println("[GAME] Duplicate join from " + sender + ", resending ACK for player " + existingPlayerId);
+            sendAck(sender, msg.getMsgSeq(), myId, existingPlayerId);
+
+            // И состояние тоже
+            SnakesProto.GameMessage.StateMsg stateMsg = SnakesProto.GameMessage.StateMsg.newBuilder()
+                    .setState(buildProtoState())
+                    .build();
+            sendMessage(sender, SnakesProto.GameMessage.newBuilder()
+                    .setMsgSeq(msgSeqCounter.getAndIncrement())
+                    .setSenderId(myId)
+                    .setReceiverId(existingPlayerId)
+                    .setState(stateMsg)
+                    .build());
+            return;
+        }
+
+        // Также проверяем по имени и адресу в существующих игроках
+        for (Player existingPlayer : gameState.getPlayers().values()) {
+            if (existingPlayer.getAddress() != null && existingPlayer.getAddress().equals(sender)) {
+                System.out.println("[GAME] Player already exists at " + sender + " with ID " + existingPlayer.getId());
+                processedJoins.put(sender, existingPlayer.getId());
+                sendAck(sender, msg.getMsgSeq(), myId, existingPlayer.getId());
+                return;
+            }
+        }
 
         if (join.getRequestedRole() == SnakesProto.NodeRole.NORMAL ||
                 join.getRequestedRole() == SnakesProto.NodeRole.VIEWER) {
@@ -680,12 +716,14 @@ public class GameController {
             newPlayer.setAddress(sender);
             gameState.addPlayer(newPlayer);
             playerLastActivity.put(newId, System.currentTimeMillis());
+            processedJoins.put(sender, newId); // Запоминаем
 
             if (role != NodeRole.VIEWER) {
                 Snake snake = gameLogic.createSnakeForPlayer(gameState, newId);
                 if (snake == null) {
                     gameState.removePlayer(newId);
                     playerLastActivity.remove(newId);
+                    processedJoins.remove(sender);
                     sendError(sender, "No room for new snake", msg.getMsgSeq());
                     return;
                 }
@@ -707,9 +745,8 @@ public class GameController {
                     .setState(stateMsg)
                     .build());
 
-            System.out.println("Player " + newId + " joined successfully");
+            System.out.println("[GAME] Player " + newId + " joined successfully");
 
-            // Проверяем нужен ли DEPUTY
             ensureDeputy();
         }
     }
@@ -849,7 +886,12 @@ public class GameController {
         Player player = gameState.getPlayer(playerId);
         if (player == null) return;
 
-        System.out.println("Player " + playerId + " leaving");
+        System.out.println("[GAME] Player " + playerId + " leaving");
+
+        // Удаляем из processedJoins
+        if (player.getAddress() != null) {
+            processedJoins.remove(player.getAddress());
+        }
 
         Snake snake = gameState.getSnake(playerId);
         if (snake != null) {
