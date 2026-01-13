@@ -1,6 +1,7 @@
 package org.example.game;
 
 import org.example.model.*;
+
 import java.util.*;
 
 public class GameLogic {
@@ -8,9 +9,12 @@ public class GameLogic {
     private final Random random = new Random();
 
     /**
-     * Выполняет один ход игры
+     * Выполняет один ход игры.
+     * Возвращает список ID игроков, чьи змейки погибли на этом ходу.
      */
-    public void tick(GameState state, Map<Integer, Direction> pendingMoves) {
+    public List<Integer> tick(GameState state, Map<Integer, Direction> pendingMoves) {
+        List<Integer> deadPlayers = new ArrayList<>();
+
         // 1. Применяем повороты
         for (Map.Entry<Integer, Direction> entry : pendingMoves.entrySet()) {
             Snake snake = state.getSnake(entry.getKey());
@@ -25,10 +29,11 @@ public class GameLogic {
         int width = state.getConfig().getWidth();
         int height = state.getConfig().getHeight();
 
-        // 2. Двигаем всех змеек, запоминаем новые позиции голов
+        // 2. Запоминаем позиции до движения для проверки коллизий
         Map<Integer, Coord> newHeads = new HashMap<>();
         Map<Integer, Boolean> ateFood = new HashMap<>();
 
+        // Вычисляем новые позиции голов
         for (Snake snake : state.getSnakes().values()) {
             Coord oldHead = snake.getHead();
             Coord newHead = new Coord(
@@ -47,34 +52,35 @@ public class GameLogic {
 
             newHeads.put(snake.getPlayerId(), newHead);
             ateFood.put(snake.getPlayerId(), ate);
-
-            snake.move(width, height, ate);
         }
 
-        // 3. Проверяем столкновения
+        // 3. Двигаем всех змеек
+        for (Snake snake : state.getSnakes().values()) {
+            snake.move(width, height, ateFood.get(snake.getPlayerId()));
+        }
+
+        // 4. Проверяем столкновения
         Set<Integer> dead = new HashSet<>();
-        Map<Integer, Integer> collisionPoints = new HashMap<>(); // Кто получит очки за столкновение
+        Map<Integer, Integer> collisionPoints = new HashMap<>();
 
         for (Snake snake : state.getSnakes().values()) {
             Coord head = snake.getHead();
 
-            // Проверяем столкновение с другими змейками (или собой)
             for (Snake other : state.getSnakes().values()) {
                 List<Coord> cells = other.getAllCells(width, height);
 
                 for (int i = 0; i < cells.size(); i++) {
                     if (cells.get(i).equals(head)) {
-                        // Если это голова той же змейки - пропускаем
+                        // Голова в голову своей же змейки - пропускаем
                         if (other.getPlayerId() == snake.getPlayerId() && i == 0) {
                             continue;
                         }
 
                         dead.add(snake.getPlayerId());
 
-                        // Если врезались в чужую змейку - она получает очко
+                        // Очки за столкновение (если врезались в чужую)
                         if (other.getPlayerId() != snake.getPlayerId()) {
-                            collisionPoints.put(other.getPlayerId(),
-                                    collisionPoints.getOrDefault(other.getPlayerId(), 0) + 1);
+                            collisionPoints.merge(other.getPlayerId(), 1, Integer::sum);
                         }
                         break;
                     }
@@ -85,8 +91,7 @@ public class GameLogic {
         // Проверяем столкновения голов
         Map<Coord, List<Integer>> headPositions = new HashMap<>();
         for (Map.Entry<Integer, Coord> entry : newHeads.entrySet()) {
-            headPositions.computeIfAbsent(entry.getValue(), k -> new ArrayList<>())
-                    .add(entry.getKey());
+            headPositions.computeIfAbsent(entry.getValue(), k -> new ArrayList<>()).add(entry.getKey());
         }
 
         for (List<Integer> ids : headPositions.values()) {
@@ -95,7 +100,7 @@ public class GameLogic {
             }
         }
 
-        // 4. Начисляем очки за столкновения
+        // 5. Начисляем очки за столкновения
         for (Map.Entry<Integer, Integer> entry : collisionPoints.entrySet()) {
             if (!dead.contains(entry.getKey())) {
                 Player player = state.getPlayer(entry.getKey());
@@ -105,7 +110,7 @@ public class GameLogic {
             }
         }
 
-        // 5. Обрабатываем смерти
+        // 6. Обрабатываем смерти
         for (int playerId : dead) {
             Snake snake = state.getSnake(playerId);
             if (snake != null) {
@@ -116,20 +121,17 @@ public class GameLogic {
                     }
                 }
                 state.removeSnake(playerId);
-
-                // Меняем роль игрока на VIEWER
-                Player player = state.getPlayer(playerId);
-                if (player != null && player.getRole() != NodeRole.VIEWER) {
-                    player.setRole(NodeRole.VIEWER);
-                }
+                deadPlayers.add(playerId);
             }
         }
 
-        // 6. Добавляем еду
+        // 7. Добавляем еду
         state.spawnFood();
 
-        // 7. Увеличиваем номер состояния
+        // 8. Увеличиваем номер состояния
         state.incrementStateOrder();
+
+        return deadPlayers;
     }
 
     /**
@@ -144,16 +146,14 @@ public class GameLogic {
         Direction[] directions = Direction.values();
         Direction dir = directions[random.nextInt(directions.length)];
 
-        // Проверяем что хвост не попадёт на еду
         Coord tailPos = new Coord(
                 center.getX() + dir.opposite().getDx(),
                 center.getY() + dir.opposite().getDy()
         ).normalize(state.getConfig().getWidth(), state.getConfig().getHeight());
 
-        if (state.getFoods().contains(center) || state.getFoods().contains(tailPos)) {
-            state.getFoods().remove(center);
-            state.getFoods().remove(tailPos);
-        }
+        // Убираем еду с позиций змейки
+        state.getFoods().remove(center);
+        state.getFoods().remove(tailPos);
 
         return new Snake(playerId, center, dir);
     }

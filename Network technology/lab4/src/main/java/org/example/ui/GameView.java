@@ -351,15 +351,26 @@ public class GameView {
 
     private void updateStatus() {
         NodeRole role = controller.getMyRole();
+        if (role == null) {
+            statusLabel.setText("Connecting...");
+            statusLabel.setTextFill(Color.YELLOW);
+            return;
+        }
+
         String roleStr = switch (role) {
-            case MASTER -> "MASTER";
-            case DEPUTY -> "DEPUTY";
-            case NORMAL -> "NORMAL";
-            case VIEWER -> "VIEWER";
-            default -> "Unknown";
+            case MASTER -> "★ MASTER";
+            case DEPUTY -> "◆ DEPUTY";
+            case NORMAL -> "● NORMAL";
+            case VIEWER -> "○ VIEWER (spectating)";
         };
 
-        statusLabel.setText("Role: " + roleStr);
+        statusLabel.setText(roleStr + " | ID: " + controller.getMyId());
+        statusLabel.setTextFill(switch (role) {
+            case MASTER -> Color.GOLD;
+            case DEPUTY -> Color.CYAN;
+            case NORMAL -> Color.LIGHTGREEN;
+            case VIEWER -> Color.GRAY;
+        });
     }
 
     private void exitGame() {

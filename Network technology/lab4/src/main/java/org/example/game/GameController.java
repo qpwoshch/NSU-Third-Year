@@ -262,8 +262,48 @@ public class GameController {
         if (myRole != NodeRole.MASTER || gameState == null) return;
 
         try {
-            gameLogic.tick(gameState, pendingMoves);
+            // tick теперь возвращает список погибших
+            List<Integer> deadPlayers = gameLogic.tick(gameState, pendingMoves);
             pendingMoves.clear();
+
+            // Обрабатываем смерти игроков
+            for (int playerId : deadPlayers) {
+                Player player = gameState.getPlayer(playerId);
+                if (player != null) {
+                    NodeRole oldRole = player.getRole();
+                    player.setRole(NodeRole.VIEWER);
+
+                    System.out.println("[GAME] Player " + playerId + " died, was " + oldRole + ", now VIEWER");
+
+                    // Если умер DEPUTY - нужен новый
+                    if (oldRole == NodeRole.DEPUTY) {
+                        deputyAddress = null;
+                    }
+
+                    // Уведомляем игрока что он теперь VIEWER
+                    if (player.getAddress() != null && playerId != myId) {
+                        SnakesProto.GameMessage.RoleChangeMsg roleChange = SnakesProto.GameMessage.RoleChangeMsg.newBuilder()
+                                .setReceiverRole(SnakesProto.NodeRole.VIEWER)
+                                .build();
+
+                        sendMessage(player.getAddress(), SnakesProto.GameMessage.newBuilder()
+                                .setMsgSeq(msgSeqCounter.getAndIncrement())
+                                .setSenderId(myId)
+                                .setReceiverId(playerId)
+                                .setRoleChange(roleChange)
+                                .build());
+                    }
+
+                    // Если умер сам MASTER
+                    if (playerId == myId) {
+                        myRole = NodeRole.VIEWER;
+                        System.out.println("[GAME] I (MASTER) died, becoming VIEWER but staying in game");
+
+                        // Нужно передать роль MASTER кому-то другому
+                        promoteNewMaster();
+                    }
+                }
+            }
 
             ensureDeputy();
             broadcastState();
@@ -273,6 +313,65 @@ public class GameController {
             }
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    private void promoteNewMaster() {
+        if (gameState == null) return;
+
+        // Ищем DEPUTY или NORMAL чтобы сделать новым MASTER
+        Player newMaster = null;
+
+        // Сначала ищем DEPUTY
+        for (Player player : gameState.getPlayers().values()) {
+            if (player.getRole() == NodeRole.DEPUTY && player.getAddress() != null) {
+                newMaster = player;
+                break;
+            }
+        }
+
+        // Если нет DEPUTY, ищем NORMAL
+        if (newMaster == null) {
+            for (Player player : gameState.getPlayers().values()) {
+                if (player.getRole() == NodeRole.NORMAL && player.getAddress() != null) {
+                    newMaster = player;
+                    break;
+                }
+            }
+        }
+
+        if (newMaster != null) {
+            System.out.println("[GAME] Promoting player " + newMaster.getId() + " to MASTER");
+
+            newMaster.setRole(NodeRole.MASTER);
+
+            // Уведомляем нового MASTER
+            SnakesProto.GameMessage.RoleChangeMsg roleChange = SnakesProto.GameMessage.RoleChangeMsg.newBuilder()
+                    .setReceiverRole(SnakesProto.NodeRole.MASTER)
+                    .build();
+
+            sendMessage(newMaster.getAddress(), SnakesProto.GameMessage.newBuilder()
+                    .setMsgSeq(msgSeqCounter.getAndIncrement())
+                    .setSenderId(myId)
+                    .setReceiverId(newMaster.getId())
+                    .setRoleChange(roleChange)
+                    .build());
+
+            // Обновляем masterAddress для себя
+            masterAddress = newMaster.getAddress();
+            deputyAddress = null;
+
+            // Останавливаем свои MASTER-задачи
+            if (gameLoopTask != null) {
+                gameLoopTask.cancel(false);
+                gameLoopTask = null;
+            }
+            if (announcementTask != null) {
+                announcementTask.cancel(false);
+                announcementTask = null;
+            }
+        } else {
+            System.out.println("[GAME] No one to promote to MASTER, game ends");
         }
     }
 
@@ -675,25 +774,51 @@ public class GameController {
 
         if (roleChange.hasReceiverRole()) {
             NodeRole newRole = fromProtoRole(roleChange.getReceiverRole());
-            System.out.println("My role changed to: " + newRole);
+            NodeRole oldRole = myRole;
             myRole = newRole;
 
-            if (newRole == NodeRole.MASTER) {
-                promoteToMaster();
+            System.out.println("[GAME] My role changed: " + oldRole + " -> " + newRole);
+
+            if (newRole == NodeRole.MASTER && oldRole != NodeRole.MASTER) {
+                // Становимся MASTER
+                System.out.println("[GAME] I am now the MASTER!");
+
+                // Обновляем свою роль в gameState
+                if (gameState != null) {
+                    Player me = gameState.getPlayer(myId);
+                    if (me != null) {
+                        me.setRole(NodeRole.MASTER);
+                    }
+                }
+
+                startGameLoop();
+                startAnnouncement();
+                ensureDeputy();
+            } else if (newRole == NodeRole.VIEWER) {
+                System.out.println("[GAME] I am now a VIEWER (my snake died)");
+                // Остаёмся в игре как наблюдатель
+            } else if (newRole == NodeRole.DEPUTY) {
+                System.out.println("[GAME] I am now the DEPUTY");
             }
         }
 
         if (roleChange.hasSenderRole()) {
-            if (roleChange.getSenderRole() == SnakesProto.NodeRole.MASTER) {
+            SnakesProto.NodeRole senderRole = roleChange.getSenderRole();
+
+            if (senderRole == SnakesProto.NodeRole.MASTER) {
                 masterAddress = sender;
-            } else if (roleChange.getSenderRole() == SnakesProto.NodeRole.VIEWER) {
+                System.out.println("[GAME] New MASTER address: " + sender);
+            } else if (senderRole == SnakesProto.NodeRole.VIEWER) {
+                // Отправитель выходит из игры
                 if (myRole == NodeRole.MASTER && msg.hasSenderId()) {
                     handlePlayerLeave(msg.getSenderId());
                 }
             }
         }
 
-        sendAck(sender, msg.getMsgSeq(), myId, msg.hasSenderId() ? msg.getSenderId() : 0);
+        if (msg.hasSenderId()) {
+            sendAck(sender, msg.getMsgSeq(), myId, msg.getSenderId());
+        }
     }
 
     private void handleError(SnakesProto.GameMessage msg) {
