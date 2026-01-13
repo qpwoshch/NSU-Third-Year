@@ -274,6 +274,8 @@ public class GameView {
     }
 
     private void updatePlayersPanel(GameState state) {
+        if (state == null) return;
+
         playersBox.getChildren().clear();
 
         Map<Integer, Color> playerColors = assignColors(state.getSnakes().keySet());
@@ -281,42 +283,68 @@ public class GameView {
         List<Player> sortedPlayers = new ArrayList<>(state.getPlayers().values());
         sortedPlayers.sort((a, b) -> Integer.compare(b.getScore(), a.getScore()));
 
-        for (Player player : sortedPlayers) {
-            if (player.getRole() == NodeRole.VIEWER) continue;
+        int myId = controller.getMyId();
 
-            HBox playerRow = new HBox(10);
+        for (Player player : sortedPlayers) {
+            HBox playerRow = new HBox(5);
             playerRow.setAlignment(Pos.CENTER_LEFT);
 
+            // Цветной квадратик (серый для VIEWER)
             Region colorBox = new Region();
             colorBox.setMinSize(12, 12);
             colorBox.setMaxSize(12, 12);
-            Color color = playerColors.getOrDefault(player.getId(), Color.GRAY);
+
+            Color color;
+            if (player.getRole() == NodeRole.VIEWER) {
+                color = Color.GRAY;
+            } else {
+                color = playerColors.getOrDefault(player.getId(), Color.GRAY);
+            }
+
             colorBox.setStyle(String.format("-fx-background-color: #%02x%02x%02x; -fx-background-radius: 2;",
                     (int) (color.getRed() * 255),
                     (int) (color.getGreen() * 255),
                     (int) (color.getBlue() * 255)));
 
+            // Имя
             String nameText = player.getName();
-            if (player.getId() == controller.getMyId()) {
+            if (player.getId() == myId) {
                 nameText += " (You)";
-            }
-            if (player.getRole() == NodeRole.MASTER) {
-                nameText += " ★";
-            } else if (player.getRole() == NodeRole.DEPUTY) {
-                nameText += " ◆";
             }
 
             Label nameLabel = new Label(nameText);
             nameLabel.setTextFill(Color.WHITE);
+            nameLabel.setMaxWidth(80);
 
+            // Роль
+            String roleText = switch (player.getRole()) {
+                case MASTER -> "★ MASTER";
+                case DEPUTY -> "◆ DEPUTY";
+                case NORMAL -> "● NORMAL";
+                case VIEWER -> "○ VIEWER";
+            };
+
+            Label roleLabel = new Label(roleText);
+            roleLabel.setMinWidth(70);
+            roleLabel.setTextFill(switch (player.getRole()) {
+                case MASTER -> Color.GOLD;
+                case DEPUTY -> Color.CYAN;
+                case NORMAL -> Color.LIGHTGREEN;
+                case VIEWER -> Color.GRAY;
+            });
+            roleLabel.setStyle("-fx-font-size: 10px;");
+
+            // Очки
             Label scoreLabel = new Label(String.valueOf(player.getScore()));
             scoreLabel.setTextFill(Color.LIGHTGREEN);
             scoreLabel.setStyle("-fx-font-weight: bold;");
+            scoreLabel.setMinWidth(30);
+            scoreLabel.setAlignment(Pos.CENTER_RIGHT);
 
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
 
-            playerRow.getChildren().addAll(colorBox, nameLabel, spacer, scoreLabel);
+            playerRow.getChildren().addAll(colorBox, nameLabel, roleLabel, spacer, scoreLabel);
             playersBox.getChildren().add(playerRow);
         }
     }
