@@ -284,18 +284,27 @@ public class GameView {
         sortedPlayers.sort((a, b) -> Integer.compare(b.getScore(), a.getScore()));
 
         int myId = controller.getMyId();
+        NodeRole myActualRole = controller.getMyRole();
 
         for (Player player : sortedPlayers) {
+            // Для себя всегда используем актуальную роль из контроллера
+            NodeRole displayRole;
+            if (player.getId() == myId && myActualRole != null) {
+                displayRole = myActualRole;
+            } else {
+                displayRole = player.getRole();
+            }
+
             HBox playerRow = new HBox(5);
             playerRow.setAlignment(Pos.CENTER_LEFT);
 
-            // Цветной квадратик (серый для VIEWER)
+            // Цветной квадратик
             Region colorBox = new Region();
             colorBox.setMinSize(12, 12);
             colorBox.setMaxSize(12, 12);
 
             Color color;
-            if (player.getRole() == NodeRole.VIEWER) {
+            if (displayRole == NodeRole.VIEWER || !playerColors.containsKey(player.getId())) {
                 color = Color.GRAY;
             } else {
                 color = playerColors.getOrDefault(player.getId(), Color.GRAY);
@@ -314,19 +323,19 @@ public class GameView {
 
             Label nameLabel = new Label(nameText);
             nameLabel.setTextFill(Color.WHITE);
-            nameLabel.setMaxWidth(80);
+            nameLabel.setMaxWidth(70);
 
             // Роль
-            String roleText = switch (player.getRole()) {
-                case MASTER -> "★ MASTER";
-                case DEPUTY -> "◆ DEPUTY";
-                case NORMAL -> "● NORMAL";
-                case VIEWER -> "○ VIEWER";
+            String roleText = switch (displayRole) {
+                case MASTER -> "★ MST";
+                case DEPUTY -> "◆ DEP";
+                case NORMAL -> "● NRM";
+                case VIEWER -> "○ VWR";
             };
 
             Label roleLabel = new Label(roleText);
-            roleLabel.setMinWidth(70);
-            roleLabel.setTextFill(switch (player.getRole()) {
+            roleLabel.setMinWidth(50);
+            roleLabel.setTextFill(switch (displayRole) {
                 case MASTER -> Color.GOLD;
                 case DEPUTY -> Color.CYAN;
                 case NORMAL -> Color.LIGHTGREEN;
@@ -375,7 +384,7 @@ public class GameView {
 
     private void exitGame() {
         controller.leaveGame();
-        controller.startDiscovery();
+        controller.startDiscovery(); // Перезапускаем discovery
         onExit.run();
     }
 }

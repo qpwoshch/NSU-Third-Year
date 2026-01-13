@@ -195,7 +195,10 @@ public class MainView {
     }
 
     private void returnToLobby() {
-        Platform.runLater(this::show);
+        Platform.runLater(() -> {
+            controller.startDiscovery();
+            show();
+        });
     }
 
     private void updateGamesList(List<GameController.GameInfo> games) {

@@ -133,6 +133,10 @@ public class GameState {
         }
     }
 
+    public void setStateOrder(int stateOrder) {
+        this.stateOrder = stateOrder;
+    }
+
     public GameState copy() {
         GameState copy = new GameState(config);
         copy.stateOrder = this.stateOrder;

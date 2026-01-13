@@ -9,29 +9,42 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 
 public class NetworkManager {
 
-    private DatagramSocket unicastSocket;
-    private MulticastSocket multicastSocket;
+    private volatile DatagramSocket unicastSocket;
+    private volatile MulticastSocket multicastSocket;
     private final BiConsumer<SnakesProto.GameMessage, InetSocketAddress> messageHandler;
-    private final ExecutorService executor;
-    private volatile boolean running;
+    private ExecutorService executor;
+    private final AtomicBoolean running = new AtomicBoolean(false);
 
     private InetAddress multicastGroup;
     private int multicastPort;
 
     public NetworkManager(BiConsumer<SnakesProto.GameMessage, InetSocketAddress> messageHandler) {
         this.messageHandler = messageHandler;
-        this.executor = Executors.newFixedThreadPool(3);
+    }
+
+    public boolean isRunning() {
+        return running.get() && unicastSocket != null && !unicastSocket.isClosed();
     }
 
     public void start() {
+        if (isRunning()) {
+            System.out.println("[NET] Already running on port " + unicastSocket.getLocalPort());
+            return;
+        }
+
         try {
+            if (executor == null || executor.isShutdown()) {
+                executor = Executors.newFixedThreadPool(3);
+            }
+
             unicastSocket = new DatagramSocket();
             unicastSocket.setBroadcast(true);
-            running = true;
+            running.set(true);
 
             executor.submit(this::receiveLoop);
 
@@ -41,15 +54,59 @@ public class NetworkManager {
         }
     }
 
-    public void stop() {
-        running = false;
+    public void restart() {
+        System.out.println("[NET] Restarting...");
 
-        if (unicastSocket != null && !unicastSocket.isClosed()) {
-            unicastSocket.close();
+        // Закрываем текущий unicast сокет
+        DatagramSocket oldSocket = unicastSocket;
+        unicastSocket = null;
+
+        if (oldSocket != null && !oldSocket.isClosed()) {
+            oldSocket.close();
         }
 
         stopMulticastReceiver();
-        executor.shutdownNow();
+
+        // Небольшая пауза
+        try {
+            Thread.sleep(50);
+        } catch (InterruptedException ignored) {}
+
+        // Создаём новый сокет
+        if (running.get()) {
+            try {
+                unicastSocket = new DatagramSocket();
+                unicastSocket.setBroadcast(true);
+
+                if (executor == null || executor.isShutdown()) {
+                    executor = Executors.newFixedThreadPool(3);
+                }
+
+                executor.submit(this::receiveLoop);
+
+                System.out.println("[NET] Restarted on new port: " + unicastSocket.getLocalPort());
+            } catch (SocketException e) {
+                System.err.println("[NET] Failed to restart: " + e.getMessage());
+            }
+        }
+    }
+
+    public void stop() {
+        running.set(false);
+
+        if (unicastSocket != null && !unicastSocket.isClosed()) {
+            unicastSocket.close();
+            unicastSocket = null;
+        }
+
+        stopMulticastReceiver();
+
+        if (executor != null && !executor.isShutdown()) {
+            executor.shutdownNow();
+            executor = null;
+        }
+
+        System.out.println("[NET] Stopped");
     }
 
     public void startMulticastReceiver(String address, int port) {
@@ -86,12 +143,13 @@ public class NetworkManager {
                 }
             }
 
-            executor.submit(this::multicastReceiveLoop);
+            if (executor != null && !executor.isShutdown()) {
+                executor.submit(this::multicastReceiveLoop);
+            }
 
             System.out.println("[NET] Multicast receiver started on " + address + ":" + port);
         } catch (IOException e) {
             System.err.println("[NET] Failed to start multicast receiver: " + e.getMessage());
-            e.printStackTrace();
         }
     }
 
@@ -108,14 +166,11 @@ public class NetworkManager {
                             InetAddress addr = addresses.nextElement();
                             if (addr instanceof Inet4Address) {
                                 result.add(ni);
-                                System.out.println("[NET] Interface: " + ni.getDisplayName() +
-                                        " (" + addr.getHostAddress() + ")");
                                 break;
                             }
                         }
                     }
-                } catch (SocketException ignored) {
-                }
+                } catch (SocketException ignored) {}
             }
         } catch (SocketException e) {
             e.printStackTrace();
@@ -126,49 +181,51 @@ public class NetworkManager {
     public void stopMulticastReceiver() {
         if (multicastSocket != null && !multicastSocket.isClosed()) {
             try {
-                multicastSocket.leaveGroup(multicastGroup);
-            } catch (Exception ignored) {
-            }
+                if (multicastGroup != null) {
+                    multicastSocket.leaveGroup(multicastGroup);
+                }
+            } catch (Exception ignored) {}
             multicastSocket.close();
             multicastSocket = null;
         }
     }
 
     public void send(SnakesProto.GameMessage message, InetSocketAddress address) {
-        if (unicastSocket == null || unicastSocket.isClosed() || address == null) return;
+        DatagramSocket socket = unicastSocket;
+        if (socket == null || socket.isClosed() || address == null) return;
 
         try {
             byte[] data = message.toByteArray();
             DatagramPacket packet = new DatagramPacket(data, data.length, address);
-            unicastSocket.send(packet);
+            socket.send(packet);
         } catch (IOException e) {
             System.err.println("[NET] Failed to send to " + address + ": " + e.getMessage());
         }
     }
 
     public void sendMulticast(SnakesProto.GameMessage message, String address, int port) {
-        if (unicastSocket == null || unicastSocket.isClosed()) return;
+        DatagramSocket socket = unicastSocket;
+        if (socket == null || socket.isClosed()) return;
 
         try {
             byte[] data = message.toByteArray();
             InetAddress group = InetAddress.getByName(address);
             DatagramPacket packet = new DatagramPacket(data, data.length, group, port);
-            unicastSocket.send(packet);
-            System.out.println("[NET] Sent multicast to " + address + ":" + port);
+            socket.send(packet);
         } catch (IOException e) {
             System.err.println("[NET] Failed to send multicast: " + e.getMessage());
         }
     }
 
     public void sendBroadcast(SnakesProto.GameMessage message, int port) {
-        if (unicastSocket == null || unicastSocket.isClosed()) return;
+        DatagramSocket socket = unicastSocket;
+        if (socket == null || socket.isClosed()) return;
 
         try {
             byte[] data = message.toByteArray();
             InetAddress broadcast = InetAddress.getByName("255.255.255.255");
             DatagramPacket packet = new DatagramPacket(data, data.length, broadcast, port);
-            unicastSocket.send(packet);
-            System.out.println("[NET] Sent broadcast to port " + port);
+            socket.send(packet);
         } catch (IOException e) {
             System.err.println("[NET] Failed to send broadcast: " + e.getMessage());
         }
@@ -176,48 +233,60 @@ public class NetworkManager {
 
     private void receiveLoop() {
         byte[] buffer = new byte[65535];
+        System.out.println("[NET] Unicast receive loop started");
 
-        while (running) {
+        while (running.get()) {
+            DatagramSocket socket = unicastSocket;
+            if (socket == null || socket.isClosed()) {
+                System.out.println("[NET] Unicast socket closed, exiting loop");
+                break;
+            }
+
             try {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                unicastSocket.setSoTimeout(500);
-                unicastSocket.receive(packet);
+                socket.setSoTimeout(500);
+                socket.receive(packet);
 
-                processPacket(packet, "UNICAST");
+                processPacket(packet);
             } catch (SocketTimeoutException e) {
-                // OK
+                // OK - проверяем running
             } catch (SocketException e) {
-                if (running) {
+                if (running.get() && unicastSocket == socket) {
                     System.err.println("[NET] Socket error: " + e.getMessage());
                 }
+                break;
             } catch (IOException e) {
-                if (running) {
+                if (running.get()) {
                     System.err.println("[NET] IO error: " + e.getMessage());
                 }
             }
         }
+        System.out.println("[NET] Unicast receive loop ended");
     }
 
     private void multicastReceiveLoop() {
         byte[] buffer = new byte[65535];
         System.out.println("[NET] Multicast receive loop started");
 
-        while (running && multicastSocket != null && !multicastSocket.isClosed()) {
+        while (running.get()) {
+            MulticastSocket socket = multicastSocket;
+            if (socket == null || socket.isClosed()) break;
+
             try {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                multicastSocket.setSoTimeout(500);
-                multicastSocket.receive(packet);
+                socket.setSoTimeout(500);
+                socket.receive(packet);
 
-                processPacket(packet, "MULTICAST");
+                processPacket(packet);
             } catch (SocketTimeoutException e) {
                 // OK
             } catch (SocketException e) {
-                if (running) {
+                if (running.get() && multicastSocket == socket) {
                     System.err.println("[NET] Multicast socket error: " + e.getMessage());
                 }
                 break;
             } catch (IOException e) {
-                if (running) {
+                if (running.get()) {
                     System.err.println("[NET] Multicast IO error: " + e.getMessage());
                 }
             }
@@ -226,7 +295,7 @@ public class NetworkManager {
         System.out.println("[NET] Multicast receive loop ended");
     }
 
-    private void processPacket(DatagramPacket packet, String source) {
+    private void processPacket(DatagramPacket packet) {
         try {
             byte[] data = new byte[packet.getLength()];
             System.arraycopy(packet.getData(), 0, data, 0, packet.getLength());
@@ -234,28 +303,14 @@ public class NetworkManager {
             SnakesProto.GameMessage message = SnakesProto.GameMessage.parseFrom(data);
             InetSocketAddress sender = new InetSocketAddress(packet.getAddress(), packet.getPort());
 
-            System.out.println("[NET] " + source + " from " + sender + " type: " + getMessageType(message));
-
             messageHandler.accept(message, sender);
         } catch (Exception e) {
             System.err.println("[NET] Failed to process packet: " + e.getMessage());
         }
     }
 
-    private String getMessageType(SnakesProto.GameMessage msg) {
-        if (msg.hasAck()) return "ACK";
-        if (msg.hasAnnouncement()) return "ANNOUNCEMENT";
-        if (msg.hasDiscover()) return "DISCOVER";
-        if (msg.hasJoin()) return "JOIN";
-        if (msg.hasState()) return "STATE";
-        if (msg.hasSteer()) return "STEER";
-        if (msg.hasPing()) return "PING";
-        if (msg.hasRoleChange()) return "ROLE_CHANGE";
-        if (msg.hasError()) return "ERROR";
-        return "UNKNOWN";
-    }
-
     public int getLocalPort() {
-        return unicastSocket != null ? unicastSocket.getLocalPort() : 0;
+        DatagramSocket socket = unicastSocket;
+        return socket != null ? socket.getLocalPort() : 0;
     }
 }
