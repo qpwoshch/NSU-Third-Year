@@ -1,0 +1,64 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.google.protobuf' version '0.9.6'
+}
+
+group = 'org.example'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+    maven { url 'https://jitpack.io' }
+}
+
+application {
+    mainClass = "org.example.Main"
+}
+
+run {
+    jvmArgs = [
+            '--module-path', 'C:/Users/User/all_projects/java/javafx-sdk-24/lib',
+            '--add-modules', 'javafx.controls,javafx.fxml'
+    ]
+}
+
+dependencies {
+    implementation fileTree(dir: 'C:/Users/User/all_projects/java/javafx-sdk-24/lib', include: ['*.jar'])
+    implementation 'com.google.protobuf:protobuf-java:4.27.2'
+}
+
+protobuf {
+    protoc {
+        artifact = 'com.google.protobuf:protoc:4.27.2'
+    }
+    // НЕ добавляем generateProtoTasks — плагин сам добавит java builtin
+    // Если хочешь опции (например lite) — тогда используй getByName("java") { option "lite" }
+}
+
+sourceSets {
+    main {
+        proto {
+            srcDir 'src/main/proto'
+        }
+        java {
+            srcDirs 'build/generated/sources/proto/main/java'
+        }
+        resources {
+            // Исключаем все .proto файлы из ресурсов (чтобы не попадали в JAR)
+            exclude '**/*.proto'
+        }
+    }
+}
+
+processResources {
+    // Самое важное — стратегия + исключение
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude '**/*.proto'
+}
+
+compileJava.dependsOn generateProto
+
+test {
+    useJUnitPlatform()
+}
