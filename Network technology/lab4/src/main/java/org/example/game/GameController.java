@@ -49,7 +49,6 @@ public class GameController {
 
     private final Map<Integer, Long> playerLastActivity;
 
-    // Кэш адресов - используем адреса из proto ИЛИ реальные адреса входящих пакетов
     private final Map<Integer, InetSocketAddress> knownPlayerAddresses;
 
     public GameController() {
@@ -781,17 +780,14 @@ public class GameController {
         playerLastActivity.put(playerId, System.currentTimeMillis());
     }
 
-    // Сохраняем реальный адрес (от входящего пакета) - имеет приоритет
     private void updatePlayerAddressFromPacket(int playerId, InetSocketAddress address) {
         if (address == null || playerId <= 0) return;
         knownPlayerAddresses.put(playerId, address);
         System.out.println("[GAME] Address from packet: player " + playerId + " -> " + address);
     }
 
-    // Сохраняем адрес из proto (если нет реального)
     private void updatePlayerAddressFromProto(int playerId, InetSocketAddress address) {
         if (address == null || playerId <= 0) return;
-        // Только если ещё не знаем адрес этого игрока
         if (!knownPlayerAddresses.containsKey(playerId)) {
             knownPlayerAddresses.put(playerId, address);
             System.out.println("[GAME] Address from proto: player " + playerId + " -> " + address);
@@ -800,7 +796,6 @@ public class GameController {
 
     private void handleMessage(SnakesProto.GameMessage msg, InetSocketAddress sender) {
         try {
-            // Сохраняем реальный адрес отправителя
             if (msg.hasSenderId() && msg.getSenderId() > 0) {
                 updatePlayerAddressFromPacket(msg.getSenderId(), sender);
                 updatePlayerActivity(msg.getSenderId());
@@ -988,7 +983,6 @@ public class GameController {
 
         gameState = fromProtoState(protoState, config != null ? config : GameConfig.defaultConfig());
 
-        // Синхронизируем роль
         if (myId > 0) {
             Player me = gameState.getPlayer(myId);
             if (me != null && myRole != me.getRole()) {
@@ -997,7 +991,6 @@ public class GameController {
             }
         }
 
-        // Обновляем DEPUTY адрес
         deputyAddress = null;
         for (Player p : gameState.getPlayers().values()) {
             if (p.getRole() == NodeRole.DEPUTY && p.getId() != myId) {
@@ -1208,7 +1201,6 @@ public class GameController {
         networkManager.send(error, address);
     }
 
-    // ========== Proto conversion ==========
 
     private SnakesProto.GameState buildProtoState() {
         SnakesProto.GameState.Builder builder = SnakesProto.GameState.newBuilder()
@@ -1247,7 +1239,6 @@ public class GameController {
                     .setRole(toProtoRole(player.getRole()))
                     .setScore(player.getScore());
 
-            // ВАЖНО: Включаем адреса в proto для передачи DEPUTY
             InetSocketAddress addr = getPlayerAddress(player.getId());
             if (addr != null) {
                 playerBuilder.setIpAddress(addr.getAddress().getHostAddress());
@@ -1322,13 +1313,11 @@ public class GameController {
             player.setScore(protoPlayer.getScore());
             state.addPlayer(player);
 
-            // КРИТИЧНО: Сохраняем адреса из proto (для DEPUTY)
             if (protoPlayer.hasIpAddress() && protoPlayer.hasPort() &&
                     !protoPlayer.getIpAddress().isEmpty()) {
                 try {
                     InetSocketAddress addr = new InetSocketAddress(
                             protoPlayer.getIpAddress(), protoPlayer.getPort());
-                    // Используем updatePlayerAddressFromProto - не перезаписывает реальные адреса
                     updatePlayerAddressFromProto(protoPlayer.getId(), addr);
                 } catch (Exception e) {
                     System.err.println("[GAME] Failed to parse address: " + e.getMessage());

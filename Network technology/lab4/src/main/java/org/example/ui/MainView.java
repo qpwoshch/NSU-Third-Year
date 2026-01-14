@@ -39,7 +39,6 @@ public class MainView {
         root.setPadding(new Insets(20));
         root.setAlignment(Pos.CENTER);
 
-        // Имя игрока
         HBox nameBox = new HBox(10);
         nameBox.setAlignment(Pos.CENTER);
         nameBox.getChildren().addAll(
@@ -47,10 +46,8 @@ public class MainView {
                 playerNameField = new TextField("Player" + System.currentTimeMillis() % 1000)
         );
 
-        // Создание новой игры
         TitledPane newGamePane = createNewGamePane();
 
-        // Список игр
         TitledPane gamesPane = createGamesListPane();
 
         root.getChildren().addAll(nameBox, newGamePane, gamesPane);
@@ -59,7 +56,6 @@ public class MainView {
         stage.setScene(scene);
         stage.show();
 
-        // Запускаем обнаружение игр
         controller.startDiscovery();
     }
 
@@ -121,7 +117,6 @@ public class MainView {
         watchButton.setOnAction(e -> joinGame(true));
         Button refreshButton = new Button("Refresh");
         refreshButton.setOnAction(e -> {
-            // Перезапускаем discovery
             controller.stopDiscovery();
             controller.startDiscovery();
         });
@@ -183,7 +178,6 @@ public class MainView {
         controller.stopDiscovery();
         controller.joinGame(playerName, selected, viewerOnly);
 
-        // Показываем игровой экран сразу, состояние придёт от сервера
         showGameView();
     }
 
@@ -203,14 +197,12 @@ public class MainView {
 
     private void updateGamesList(List<GameController.GameInfo> games) {
         Platform.runLater(() -> {
-            // Сохраняем текущий выбор
             GameController.GameInfo selected = gamesList.getSelectionModel().getSelectedItem();
             String selectedName = selected != null ? selected.getName() : null;
 
             gamesList.getItems().clear();
             gamesList.getItems().addAll(games);
 
-            // Восстанавливаем выбор
             if (selectedName != null) {
                 for (GameController.GameInfo game : games) {
                     if (game.getName().equals(selectedName)) {

@@ -52,18 +52,13 @@ public class GameState {
         return snakes.get(playerId);
     }
 
-    /**
-     * Подсчитывает количество ALIVE змеек
-     */
+
     public int getAliveSnakesCount() {
         return (int) snakes.values().stream()
                 .filter(s -> s.getState() == Snake.SnakeState.ALIVE)
                 .count();
     }
 
-    /**
-     * Возвращает все занятые клетки
-     */
     public Set<Coord> getOccupiedCells() {
         Set<Coord> occupied = new HashSet<>();
         for (Snake snake : snakes.values()) {
@@ -72,9 +67,7 @@ public class GameState {
         return occupied;
     }
 
-    /**
-     * Ищет свободный квадрат 5x5 для новой змейки
-     */
+
     public Coord findFreeSquare() {
         Set<Coord> occupied = getOccupiedCells();
 
@@ -106,9 +99,7 @@ public class GameState {
         return true;
     }
 
-    /**
-     * Добавляет еду на поле
-     */
+
     public void spawnFood() {
         int required = config.getFoodStatic() + getAliveSnakesCount();
         Set<Coord> occupied = getOccupiedCells();

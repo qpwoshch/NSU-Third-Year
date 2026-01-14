@@ -9,9 +9,7 @@ import org.example.game.GameController;
 
 import java.util.List;
 
-/**
- * Вспомогательный класс для отображения списка игр в игровом экране
- */
+
 public class LobbyView extends VBox {
 
     private final ListView<GameController.GameInfo> gamesList;

@@ -142,11 +142,9 @@ public class GameView {
             canvas.setHeight(height * CELL_SIZE);
         }
 
-        // Фон
         gc.setFill(BACKGROUND_COLOR);
         gc.fillRect(0, 0, canvas.getWidth(), canvas.getHeight());
 
-        // Сетка
         gc.setStroke(GRID_COLOR);
         gc.setLineWidth(0.5);
         for (int x = 0; x <= width; x++) {
@@ -156,7 +154,6 @@ public class GameView {
             gc.strokeLine(0, y * CELL_SIZE, width * CELL_SIZE, y * CELL_SIZE);
         }
 
-        // Еда
         gc.setFill(FOOD_COLOR);
         for (Coord food : state.getFoods()) {
             gc.fillOval(
@@ -167,7 +164,6 @@ public class GameView {
             );
         }
 
-        // Змейки
         Map<Integer, Color> playerColors = assignColors(state.getSnakes().keySet());
 
         for (Snake snake : state.getSnakes().values()) {
@@ -206,7 +202,6 @@ public class GameView {
             }
         }
 
-        // Выделяем свою змейку
         Snake mySnake = state.getSnake(controller.getMyId());
         if (mySnake != null) {
             Coord head = mySnake.getHead();
@@ -287,7 +282,6 @@ public class GameView {
         NodeRole myActualRole = controller.getMyRole();
 
         for (Player player : sortedPlayers) {
-            // Для себя всегда используем актуальную роль из контроллера
             NodeRole displayRole;
             if (player.getId() == myId && myActualRole != null) {
                 displayRole = myActualRole;
@@ -298,7 +292,6 @@ public class GameView {
             HBox playerRow = new HBox(5);
             playerRow.setAlignment(Pos.CENTER_LEFT);
 
-            // Цветной квадратик
             Region colorBox = new Region();
             colorBox.setMinSize(12, 12);
             colorBox.setMaxSize(12, 12);
@@ -315,7 +308,6 @@ public class GameView {
                     (int) (color.getGreen() * 255),
                     (int) (color.getBlue() * 255)));
 
-            // Имя
             String nameText = player.getName();
             if (player.getId() == myId) {
                 nameText += " (You)";
@@ -325,7 +317,6 @@ public class GameView {
             nameLabel.setTextFill(Color.WHITE);
             nameLabel.setMaxWidth(70);
 
-            // Роль
             String roleText = switch (displayRole) {
                 case MASTER -> "★ MST";
                 case DEPUTY -> "◆ DEP";
@@ -343,7 +334,6 @@ public class GameView {
             });
             roleLabel.setStyle("-fx-font-size: 10px;");
 
-            // Очки
             Label scoreLabel = new Label(String.valueOf(player.getScore()));
             scoreLabel.setTextFill(Color.LIGHTGREEN);
             scoreLabel.setStyle("-fx-font-weight: bold;");
@@ -384,7 +374,7 @@ public class GameView {
 
     private void exitGame() {
         controller.leaveGame();
-        controller.startDiscovery(); // Перезапускаем discovery
+        controller.startDiscovery();
         onExit.run();
     }
 }

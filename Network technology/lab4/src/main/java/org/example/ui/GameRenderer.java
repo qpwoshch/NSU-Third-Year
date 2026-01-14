@@ -31,17 +31,13 @@ public class GameRenderer {
         int width = state.getConfig().getWidth();
         int height = state.getConfig().getHeight();
 
-        // Фон
         gc.setFill(BACKGROUND_COLOR);
         gc.fillRect(0, 0, width * cellSize, height * cellSize);
 
-        // Сетка
         drawGrid(gc, width, height);
 
-        // Еда
         drawFood(gc, state.getFoods());
 
-        // Змейки
         drawSnakes(gc, state, myPlayerId);
     }
 
@@ -92,7 +88,6 @@ public class GameRenderer {
                 Coord cell = cells.get(i);
 
                 if (i == 0) {
-                    // Голова
                     gc.setFill(color.brighter());
                     gc.fillRoundRect(
                             cell.getX() * cellSize + 1,
@@ -102,11 +97,9 @@ public class GameRenderer {
                             5, 5
                     );
 
-                    // Глаза
                     gc.setFill(Color.BLACK);
                     drawEyes(gc, cell, snake.getHeadDirection());
                 } else {
-                    // Тело
                     gc.setFill(color);
                     gc.fillRoundRect(
                             cell.getX() * cellSize + 2,
@@ -118,7 +111,6 @@ public class GameRenderer {
                 }
             }
 
-            // Выделение своей змейки
             if (snake.getPlayerId() == myPlayerId) {
                 Coord head = snake.getHead();
                 gc.setStroke(Color.WHITE);

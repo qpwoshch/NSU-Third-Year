@@ -23,7 +23,6 @@ public class NetworkManager {
     private InetAddress multicastGroup;
     private int multicastPort;
 
-    // Предпочтительный интерфейс для отправки
     private InetAddress preferredLocalAddress;
 
     public NetworkManager(BiConsumer<SnakesProto.GameMessage, InetSocketAddress> messageHandler) {
@@ -50,7 +49,6 @@ public class NetworkManager {
 
                 String name = ni.getDisplayName().toLowerCase();
 
-                // Пропускаем виртуальные интерфейсы
                 if (name.contains("virtual") ||
                         name.contains("vmware") ||
                         name.contains("virtualbox") ||
@@ -72,7 +70,6 @@ public class NetworkManager {
 
                     String ip = addr.getHostAddress();
 
-                    // Пропускаем виртуальные диапазоны
                     if (ip.startsWith("127.") ||
                             ip.startsWith("169.254.") ||
                             ip.startsWith("172.16.") || ip.startsWith("172.17.") ||
@@ -86,13 +83,11 @@ public class NetworkManager {
                         continue;
                     }
 
-                    // Предпочитаем 192.168.x.x
                     if (ip.startsWith("192.168.")) {
                         System.out.println("[NET] Found preferred interface: " + ni.getDisplayName() + " with IP " + ip);
                         return addr;
                     }
 
-                    // Запоминаем как fallback
                     if (fallback == null) {
                         fallback = addr;
                     }
@@ -104,7 +99,6 @@ public class NetworkManager {
                 return fallback;
             }
 
-            // Последний вариант
             return InetAddress.getLocalHost();
 
         } catch (Exception e) {
@@ -132,7 +126,6 @@ public class NetworkManager {
                 executor = Executors.newFixedThreadPool(3);
             }
 
-            // Привязываем к предпочтительному адресу
             if (preferredLocalAddress != null) {
                 unicastSocket = new DatagramSocket(0, preferredLocalAddress);
                 System.out.println("[NET] Bound to: " + preferredLocalAddress.getHostAddress() + ":" + unicastSocket.getLocalPort());
@@ -218,7 +211,6 @@ public class NetworkManager {
             multicastSocket.setReuseAddress(true);
             multicastSocket.bind(new InetSocketAddress(port));
 
-            // Присоединяемся только к физическим интерфейсам
             List<NetworkInterface> interfaces = getPhysicalMulticastInterfaces();
             System.out.println("[NET] Found " + interfaces.size() + " physical multicast interfaces");
 
@@ -268,7 +260,6 @@ public class NetworkManager {
 
                     String name = ni.getDisplayName().toLowerCase();
 
-                    // Пропускаем виртуальные
                     if (name.contains("virtual") ||
                             name.contains("vmware") ||
                             name.contains("virtualbox") ||
@@ -281,14 +272,12 @@ public class NetworkManager {
                         continue;
                     }
 
-                    // Проверяем есть ли IPv4 адрес
                     Enumeration<InetAddress> addresses = ni.getInetAddresses();
                     while (addresses.hasMoreElements()) {
                         InetAddress addr = addresses.nextElement();
                         if (addr instanceof Inet4Address) {
                             String ip = addr.getHostAddress();
 
-                            // Пропускаем виртуальные диапазоны
                             if (ip.startsWith("172.16.") || ip.startsWith("172.17.") ||
                                     ip.startsWith("172.18.") || ip.startsWith("172.19.") ||
                                     ip.startsWith("172.20.") || ip.startsWith("172.21.") ||
@@ -385,7 +374,6 @@ public class NetworkManager {
 
                 processPacket(packet);
             } catch (SocketTimeoutException e) {
-                // OK
             } catch (SocketException e) {
                 if (running.get() && unicastSocket == socket) {
                     System.err.println("[NET] Socket error: " + e.getMessage());
@@ -415,7 +403,6 @@ public class NetworkManager {
 
                 processPacket(packet);
             } catch (SocketTimeoutException e) {
-                // OK
             } catch (SocketException e) {
                 if (running.get() && multicastSocket == socket) {
                     System.err.println("[NET] Multicast socket error: " + e.getMessage());
