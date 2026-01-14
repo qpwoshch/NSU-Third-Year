@@ -23,8 +23,98 @@ public class NetworkManager {
     private InetAddress multicastGroup;
     private int multicastPort;
 
+    // Предпочтительный интерфейс для отправки
+    private InetAddress preferredLocalAddress;
+
     public NetworkManager(BiConsumer<SnakesProto.GameMessage, InetSocketAddress> messageHandler) {
         this.messageHandler = messageHandler;
+        this.preferredLocalAddress = findPreferredLocalAddress();
+        System.out.println("[NET] Preferred local address: " + preferredLocalAddress);
+    }
+
+    /**
+     * Находит предпочтительный локальный адрес (не виртуальный)
+     */
+    private InetAddress findPreferredLocalAddress() {
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+
+            InetAddress fallback = null;
+
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface ni = interfaces.nextElement();
+
+                if (!ni.isUp() || ni.isLoopback() || ni.isVirtual()) {
+                    continue;
+                }
+
+                String name = ni.getDisplayName().toLowerCase();
+
+                // Пропускаем виртуальные интерфейсы
+                if (name.contains("virtual") ||
+                        name.contains("vmware") ||
+                        name.contains("virtualbox") ||
+                        name.contains("hyper-v") ||
+                        name.contains("vethernet") ||
+                        name.contains("wsl") ||
+                        name.contains("docker") ||
+                        name.contains("vbox")) {
+                    continue;
+                }
+
+                Enumeration<InetAddress> addresses = ni.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    InetAddress addr = addresses.nextElement();
+
+                    if (!(addr instanceof Inet4Address)) {
+                        continue;
+                    }
+
+                    String ip = addr.getHostAddress();
+
+                    // Пропускаем виртуальные диапазоны
+                    if (ip.startsWith("127.") ||
+                            ip.startsWith("169.254.") ||
+                            ip.startsWith("172.16.") || ip.startsWith("172.17.") ||
+                            ip.startsWith("172.18.") || ip.startsWith("172.19.") ||
+                            ip.startsWith("172.20.") || ip.startsWith("172.21.") ||
+                            ip.startsWith("172.22.") || ip.startsWith("172.23.") ||
+                            ip.startsWith("172.24.") || ip.startsWith("172.25.") ||
+                            ip.startsWith("172.26.") || ip.startsWith("172.27.") ||
+                            ip.startsWith("172.28.") || ip.startsWith("172.29.") ||
+                            ip.startsWith("172.30.") || ip.startsWith("172.31.")) {
+                        continue;
+                    }
+
+                    // Предпочитаем 192.168.x.x
+                    if (ip.startsWith("192.168.")) {
+                        System.out.println("[NET] Found preferred interface: " + ni.getDisplayName() + " with IP " + ip);
+                        return addr;
+                    }
+
+                    // Запоминаем как fallback
+                    if (fallback == null) {
+                        fallback = addr;
+                    }
+                }
+            }
+
+            if (fallback != null) {
+                System.out.println("[NET] Using fallback address: " + fallback.getHostAddress());
+                return fallback;
+            }
+
+            // Последний вариант
+            return InetAddress.getLocalHost();
+
+        } catch (Exception e) {
+            System.err.println("[NET] Error finding preferred address: " + e.getMessage());
+            try {
+                return InetAddress.getLocalHost();
+            } catch (UnknownHostException ex) {
+                return null;
+            }
+        }
     }
 
     public boolean isRunning() {
@@ -42,7 +132,14 @@ public class NetworkManager {
                 executor = Executors.newFixedThreadPool(3);
             }
 
-            unicastSocket = new DatagramSocket();
+            // Привязываем к предпочтительному адресу
+            if (preferredLocalAddress != null) {
+                unicastSocket = new DatagramSocket(0, preferredLocalAddress);
+                System.out.println("[NET] Bound to: " + preferredLocalAddress.getHostAddress() + ":" + unicastSocket.getLocalPort());
+            } else {
+                unicastSocket = new DatagramSocket();
+            }
+
             unicastSocket.setBroadcast(true);
             running.set(true);
 
@@ -57,7 +154,6 @@ public class NetworkManager {
     public void restart() {
         System.out.println("[NET] Restarting...");
 
-        // Закрываем текущий unicast сокет
         DatagramSocket oldSocket = unicastSocket;
         unicastSocket = null;
 
@@ -67,15 +163,17 @@ public class NetworkManager {
 
         stopMulticastReceiver();
 
-        // Небольшая пауза
         try {
             Thread.sleep(50);
         } catch (InterruptedException ignored) {}
 
-        // Создаём новый сокет
         if (running.get()) {
             try {
-                unicastSocket = new DatagramSocket();
+                if (preferredLocalAddress != null) {
+                    unicastSocket = new DatagramSocket(0, preferredLocalAddress);
+                } else {
+                    unicastSocket = new DatagramSocket();
+                }
                 unicastSocket.setBroadcast(true);
 
                 if (executor == null || executor.isShutdown()) {
@@ -120,8 +218,9 @@ public class NetworkManager {
             multicastSocket.setReuseAddress(true);
             multicastSocket.bind(new InetSocketAddress(port));
 
-            List<NetworkInterface> interfaces = getMulticastInterfaces();
-            System.out.println("[NET] Found " + interfaces.size() + " multicast interfaces");
+            // Присоединяемся только к физическим интерфейсам
+            List<NetworkInterface> interfaces = getPhysicalMulticastInterfaces();
+            System.out.println("[NET] Found " + interfaces.size() + " physical multicast interfaces");
 
             boolean joined = false;
             for (NetworkInterface ni : interfaces) {
@@ -153,21 +252,58 @@ public class NetworkManager {
         }
     }
 
-    private List<NetworkInterface> getMulticastInterfaces() {
+    /**
+     * Возвращает только физические (не виртуальные) интерфейсы
+     */
+    private List<NetworkInterface> getPhysicalMulticastInterfaces() {
         List<NetworkInterface> result = new ArrayList<>();
         try {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
             while (interfaces.hasMoreElements()) {
                 NetworkInterface ni = interfaces.nextElement();
                 try {
-                    if (ni.isUp() && ni.supportsMulticast()) {
-                        Enumeration<InetAddress> addresses = ni.getInetAddresses();
-                        while (addresses.hasMoreElements()) {
-                            InetAddress addr = addresses.nextElement();
-                            if (addr instanceof Inet4Address) {
-                                result.add(ni);
-                                break;
+                    if (!ni.isUp() || !ni.supportsMulticast() || ni.isLoopback()) {
+                        continue;
+                    }
+
+                    String name = ni.getDisplayName().toLowerCase();
+
+                    // Пропускаем виртуальные
+                    if (name.contains("virtual") ||
+                            name.contains("vmware") ||
+                            name.contains("virtualbox") ||
+                            name.contains("hyper-v") ||
+                            name.contains("vethernet") ||
+                            name.contains("wsl") ||
+                            name.contains("docker") ||
+                            name.contains("vbox")) {
+                        System.out.println("[NET] Skipping virtual interface: " + ni.getDisplayName());
+                        continue;
+                    }
+
+                    // Проверяем есть ли IPv4 адрес
+                    Enumeration<InetAddress> addresses = ni.getInetAddresses();
+                    while (addresses.hasMoreElements()) {
+                        InetAddress addr = addresses.nextElement();
+                        if (addr instanceof Inet4Address) {
+                            String ip = addr.getHostAddress();
+
+                            // Пропускаем виртуальные диапазоны
+                            if (ip.startsWith("172.16.") || ip.startsWith("172.17.") ||
+                                    ip.startsWith("172.18.") || ip.startsWith("172.19.") ||
+                                    ip.startsWith("172.20.") || ip.startsWith("172.21.") ||
+                                    ip.startsWith("172.22.") || ip.startsWith("172.23.") ||
+                                    ip.startsWith("172.24.") || ip.startsWith("172.25.") ||
+                                    ip.startsWith("172.26.") || ip.startsWith("172.27.") ||
+                                    ip.startsWith("172.28.") || ip.startsWith("172.29.") ||
+                                    ip.startsWith("172.30.") || ip.startsWith("172.31.")) {
+                                System.out.println("[NET] Skipping virtual IP range: " + ip);
+                                continue;
                             }
+
+                            result.add(ni);
+                            System.out.println("[NET] Added physical interface: " + ni.getDisplayName() + " (" + ip + ")");
+                            break;
                         }
                     }
                 } catch (SocketException ignored) {}
@@ -249,7 +385,7 @@ public class NetworkManager {
 
                 processPacket(packet);
             } catch (SocketTimeoutException e) {
-                // OK - проверяем running
+                // OK
             } catch (SocketException e) {
                 if (running.get() && unicastSocket == socket) {
                     System.err.println("[NET] Socket error: " + e.getMessage());
@@ -312,5 +448,9 @@ public class NetworkManager {
     public int getLocalPort() {
         DatagramSocket socket = unicastSocket;
         return socket != null ? socket.getLocalPort() : 0;
+    }
+
+    public InetAddress getLocalAddress() {
+        return preferredLocalAddress;
     }
 }

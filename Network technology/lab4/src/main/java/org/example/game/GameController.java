@@ -47,8 +47,10 @@ public class GameController {
     private final Map<String, GameInfo> availableGames;
     private volatile long lastMasterActivity;
 
-    // Для отслеживания последней активности по каждому игроку на стороне MASTER
     private final Map<Integer, Long> playerLastActivity;
+
+    // Кэш адресов - используем адреса из proto ИЛИ реальные адреса входящих пакетов
+    private final Map<Integer, InetSocketAddress> knownPlayerAddresses;
 
     public GameController() {
         this.networkManager = new NetworkManager(this::handleMessage);
@@ -61,6 +63,7 @@ public class GameController {
         this.availableGames = new ConcurrentHashMap<>();
         this.playerLastActivity = new ConcurrentHashMap<>();
         this.processedJoins = new ConcurrentHashMap<>();
+        this.knownPlayerAddresses = new ConcurrentHashMap<>();
     }
 
     public void setStateUpdateCallback(Consumer<GameState> callback) {
@@ -101,21 +104,11 @@ public class GameController {
             networkManager.start();
         }
 
-        // ВАЖНО: Сохраняем свой адрес
-        try {
-            int myPort = networkManager.getLocalPort();
-            java.net.InetAddress localAddr = java.net.InetAddress.getLocalHost();
-            player.setAddress(new InetSocketAddress(localAddr, myPort));
-            System.out.println("[GAME] My address: " + player.getAddress());
-        } catch (Exception e) {
-            System.err.println("[GAME] Failed to get my address: " + e.getMessage());
-        }
+        System.out.println("[GAME] Started new game: " + gameName + " as MASTER, player " + myId);
 
         startGameLoop();
         startAnnouncement();
         startTimeoutChecker();
-
-        System.out.println("[GAME] Started new game: " + gameName + " as player " + myId);
     }
 
     public void joinGame(String playerName, GameInfo gameInfo, boolean viewerOnly) {
@@ -140,7 +133,7 @@ public class GameController {
                 .setJoin(joinMsg)
                 .build());
 
-        System.out.println("Joining game: " + gameName + " at " + masterAddress);
+        System.out.println("[GAME] Joining game: " + gameName + " at " + masterAddress);
     }
 
     public void steer(Direction direction) {
@@ -177,8 +170,8 @@ public class GameController {
         playerLastActivity.clear();
         processedJoins.clear();
         availableGames.clear();
+        knownPlayerAddresses.clear();
 
-        // Сбрасываем счётчики
         msgSeqCounter.set(0);
 
         System.out.println("[GAME] Client state reset");
@@ -187,12 +180,9 @@ public class GameController {
     public void leaveGame() {
         System.out.println("[GAME] Leaving game, myRole=" + myRole + ", myId=" + myId);
 
-        // Если мы MASTER - сначала передаём роль
         if (myRole == NodeRole.MASTER && gameState != null) {
             transferMasterRoleBeforeLeave();
-        }
-        // Если мы не MASTER - уведомляем сервер
-        else if (myRole != null && masterAddress != null && myId > 0) {
+        } else if (myRole != null && masterAddress != null && myId > 0) {
             try {
                 SnakesProto.GameMessage.RoleChangeMsg roleChange = SnakesProto.GameMessage.RoleChangeMsg.newBuilder()
                         .setSenderRole(SnakesProto.NodeRole.VIEWER)
@@ -208,7 +198,6 @@ public class GameController {
             }
         }
 
-        // Останавливаем задачи
         if (gameLoopTask != null) {
             gameLoopTask.cancel(false);
             gameLoopTask = null;
@@ -231,41 +220,18 @@ public class GameController {
     private void transferMasterRoleBeforeLeave() {
         System.out.println("[GAME] Transferring MASTER role before leaving...");
 
-        Player newMaster = null;
-
-        // Ищем DEPUTY
-        for (Player player : gameState.getPlayers().values()) {
-            if (player.getId() != myId &&
-                    player.getRole() == NodeRole.DEPUTY &&
-                    player.getAddress() != null) {
-                newMaster = player;
-                break;
-            }
-        }
-
-        // Если нет DEPUTY, ищем NORMAL
-        if (newMaster == null) {
-            for (Player player : gameState.getPlayers().values()) {
-                if (player.getId() != myId &&
-                        player.getRole() == NodeRole.NORMAL &&
-                        player.getAddress() != null) {
-                    newMaster = player;
-                    break;
-                }
-            }
-        }
+        Player newMaster = findBestNewMaster();
 
         if (newMaster != null) {
-            System.out.println("[GAME] Transferring MASTER to player " + newMaster.getId());
+            InetSocketAddress newMasterAddr = getPlayerAddress(newMaster.getId());
+            System.out.println("[GAME] Transferring MASTER to player " + newMaster.getId() + " at " + newMasterAddr);
 
-            // Обновляем роли в gameState
             newMaster.setRole(NodeRole.MASTER);
             Player me = gameState.getPlayer(myId);
             if (me != null) {
                 me.setRole(NodeRole.VIEWER);
             }
 
-            // Отправляем ТОЛЬКО новому MASTER уведомление
             SnakesProto.GameMessage.RoleChangeMsg roleChange = SnakesProto.GameMessage.RoleChangeMsg.newBuilder()
                     .setSenderRole(SnakesProto.NodeRole.VIEWER)
                     .setReceiverRole(SnakesProto.NodeRole.MASTER)
@@ -276,18 +242,39 @@ public class GameController {
                     .setSenderId(myId)
                     .setReceiverId(newMaster.getId())
                     .setRoleChange(roleChange)
-                    .build(), newMaster.getAddress());
+                    .build(), newMasterAddr);
 
-            // Рассылаем последнее состояние с обновлёнными ролями
             broadcastState();
-
-            System.out.println("[GAME] MASTER role transferred to " + newMaster.getId());
         } else {
             System.out.println("[GAME] No one to transfer MASTER role to");
         }
     }
 
+    private Player findBestNewMaster() {
+        if (gameState == null) return null;
 
+        for (Player player : gameState.getPlayers().values()) {
+            if (player.getId() != myId &&
+                    player.getRole() == NodeRole.DEPUTY &&
+                    getPlayerAddress(player.getId()) != null) {
+                return player;
+            }
+        }
+
+        for (Player player : gameState.getPlayers().values()) {
+            if (player.getId() != myId &&
+                    player.getRole() == NodeRole.NORMAL &&
+                    getPlayerAddress(player.getId()) != null) {
+                return player;
+            }
+        }
+
+        return null;
+    }
+
+    private InetSocketAddress getPlayerAddress(int playerId) {
+        return knownPlayerAddresses.get(playerId);
+    }
 
     public void shutdown() {
         stopDiscovery();
@@ -297,25 +284,19 @@ public class GameController {
     }
 
     public void startDiscovery() {
-        // Останавливаем предыдущий discovery если был
         stopDiscovery();
 
-        // Убеждаемся что networkManager запущен
         if (!networkManager.isRunning()) {
             networkManager.start();
         }
 
         networkManager.startMulticastReceiver(MULTICAST_ADDRESS, MULTICAST_PORT);
-
-        // Очищаем старый список
         availableGames.clear();
 
         discoveryTask = scheduler.scheduleAtFixedRate(() -> {
-            // Удаляем старые игры (не получали анонс более 3 секунд)
             long now = System.currentTimeMillis();
             availableGames.entrySet().removeIf(e -> now - e.getValue().getLastSeen() > 3000);
 
-            // Обновляем UI
             if (gamesListCallback != null) {
                 gamesListCallback.accept(new ArrayList<>(availableGames.values()));
             }
@@ -345,8 +326,6 @@ public class GameController {
     public int getMyId() {
         return myId;
     }
-
-    // ========== Private methods ==========
 
     private void startGameLoop() {
         if (gameLoopTask != null) {
@@ -392,20 +371,18 @@ public class GameController {
 
         gameState = null;
         myRole = null;
-        myId = 0; // Сбрасываем ID
+        myId = 0;
         masterAddress = null;
         deputyAddress = null;
         playerLastActivity.clear();
         processedJoins.clear();
         pendingMoves.clear();
         unackedMessages.clear();
-
-        // НЕ останавливаем networkManager здесь!
+        knownPlayerAddresses.clear();
     }
 
     private void gameTick() {
         if (myRole != NodeRole.MASTER || gameState == null) {
-            System.out.println("[GAME] gameTick called but I am not MASTER anymore → exiting");
             return;
         }
 
@@ -415,7 +392,6 @@ public class GameController {
 
             boolean iDied = false;
 
-            // Обрабатываем смерти
             for (int playerId : deadPlayers) {
                 Player player = gameState.getPlayer(playerId);
                 if (player != null) {
@@ -428,13 +404,13 @@ public class GameController {
                         deputyAddress = null;
                     }
 
-                    // Уведомляем игрока (кроме себя)
-                    if (player.getAddress() != null && playerId != myId) {
+                    InetSocketAddress playerAddr = getPlayerAddress(playerId);
+                    if (playerAddr != null && playerId != myId) {
                         SnakesProto.GameMessage.RoleChangeMsg roleChangeMsg = SnakesProto.GameMessage.RoleChangeMsg.newBuilder()
                                 .setReceiverRole(SnakesProto.NodeRole.VIEWER)
                                 .build();
 
-                        sendMessage(player.getAddress(), SnakesProto.GameMessage.newBuilder()
+                        sendMessage(playerAddr, SnakesProto.GameMessage.newBuilder()
                                 .setMsgSeq(msgSeqCounter.getAndIncrement())
                                 .setSenderId(myId)
                                 .setReceiverId(playerId)
@@ -448,20 +424,16 @@ public class GameController {
                 }
             }
 
-            // Если я умер - сначала рассылаем состояние, потом передаём роль
             if (iDied) {
                 System.out.println("[GAME] I (MASTER) died!");
 
-                // Обновляем свою роль
                 Player me = gameState.getPlayer(myId);
                 if (me != null) {
                     me.setRole(NodeRole.VIEWER);
                 }
 
                 ensureDeputy();
-                broadcastState(); // Рассылаем состояние пока ещё MASTER
-
-                // Теперь передаём роль
+                broadcastState();
                 promoteNewMaster();
             } else {
                 ensureDeputy();
@@ -480,51 +452,25 @@ public class GameController {
         if (gameState == null) return;
 
         System.out.println("[GAME] === PROMOTE NEW MASTER ===");
-        System.out.println("[GAME] Current players:");
-        for (Player p : gameState.getPlayers().values()) {
-            System.out.println("[GAME]   ID=" + p.getId() + ", role=" + p.getRole() + ", addr=" + p.getAddress());
+        System.out.println("[GAME] Known addresses:");
+        for (Map.Entry<Integer, InetSocketAddress> entry : knownPlayerAddresses.entrySet()) {
+            System.out.println("[GAME]   Player " + entry.getKey() + " -> " + entry.getValue());
         }
 
-        Player newMaster = null;
-
-        // Ищем DEPUTY
-        for (Player player : gameState.getPlayers().values()) {
-            if (player.getId() != myId &&
-                    player.getRole() == NodeRole.DEPUTY &&
-                    player.getAddress() != null) {
-                newMaster = player;
-                System.out.println("[GAME] Found DEPUTY: " + player.getId());
-                break;
-            }
-        }
-
-        // Если нет DEPUTY, ищем NORMAL
-        if (newMaster == null) {
-            for (Player player : gameState.getPlayers().values()) {
-                if (player.getId() != myId &&
-                        player.getRole() == NodeRole.NORMAL &&
-                        player.getAddress() != null) {
-                    newMaster = player;
-                    System.out.println("[GAME] Found NORMAL: " + player.getId());
-                    break;
-                }
-            }
-        }
+        Player newMaster = findBestNewMaster();
 
         if (newMaster != null) {
-            System.out.println("[GAME] Promoting player " + newMaster.getId() + " at " + newMaster.getAddress());
+            InetSocketAddress newMasterAddr = getPlayerAddress(newMaster.getId());
+            System.out.println("[GAME] Promoting player " + newMaster.getId() + " at " + newMasterAddr);
 
-            // Обновляем роли
             newMaster.setRole(NodeRole.MASTER);
 
             Player me = gameState.getPlayer(myId);
             if (me != null) {
                 me.setRole(NodeRole.VIEWER);
-                System.out.println("[GAME] My address in gameState: " + me.getAddress());
             }
             myRole = NodeRole.VIEWER;
 
-            // Сбрасываем других DEPUTY
             for (Player player : gameState.getPlayers().values()) {
                 if (player.getId() != myId && player.getId() != newMaster.getId() &&
                         player.getRole() == NodeRole.DEPUTY) {
@@ -532,28 +478,24 @@ public class GameController {
                 }
             }
 
-            // Отправляем новому MASTER
             SnakesProto.GameMessage.RoleChangeMsg roleChange = SnakesProto.GameMessage.RoleChangeMsg.newBuilder()
                     .setSenderRole(SnakesProto.NodeRole.VIEWER)
                     .setReceiverRole(SnakesProto.NodeRole.MASTER)
                     .build();
 
-            sendMessage(newMaster.getAddress(), SnakesProto.GameMessage.newBuilder()
+            sendMessage(newMasterAddr, SnakesProto.GameMessage.newBuilder()
                     .setMsgSeq(msgSeqCounter.getAndIncrement())
                     .setSenderId(myId)
                     .setReceiverId(newMaster.getId())
                     .setRoleChange(roleChange)
                     .build());
 
-            // Рассылаем состояние
-            System.out.println("[GAME] Broadcasting final state before stepping down...");
             broadcastState();
 
-            masterAddress = newMaster.getAddress();
+            masterAddress = newMasterAddr;
             deputyAddress = null;
             lastMasterActivity = System.currentTimeMillis();
 
-            // Останавливаем задачи
             if (gameLoopTask != null) {
                 gameLoopTask.cancel(false);
                 gameLoopTask = null;
@@ -563,29 +505,26 @@ public class GameController {
                 announcementTask = null;
             }
 
-            System.out.println("[GAME] I am now VIEWER, masterAddress=" + masterAddress);
+            System.out.println("[GAME] I am now VIEWER, new MASTER is " + newMaster.getId());
 
             if (stateUpdateCallback != null) {
                 stateUpdateCallback.accept(gameState);
             }
+
+            SnakesProto.GameMessage.JoinMsg joinAsViewer = SnakesProto.GameMessage.JoinMsg.newBuilder()
+                    .setPlayerName(myName)
+                    .setGameName(gameName)
+                    .setRequestedRole(SnakesProto.NodeRole.VIEWER)
+                    .build();
+
+            sendMessage(masterAddress, SnakesProto.GameMessage.newBuilder()
+                    .setMsgSeq(msgSeqCounter.getAndIncrement())
+                    .setJoin(joinAsViewer)
+                    .setSenderId(myId)
+                    .build());
         } else {
             System.out.println("[GAME] No one to promote!");
         }
-        SnakesProto.GameMessage.JoinMsg joinAsViewer = SnakesProto.GameMessage.JoinMsg.newBuilder()
-                .setPlayerName(myName)
-                .setGameName(gameName)
-                .setRequestedRole(SnakesProto.NodeRole.VIEWER)
-                .build();
-
-        SnakesProto.GameMessage msg = SnakesProto.GameMessage.newBuilder()
-                .setMsgSeq(msgSeqCounter.getAndIncrement())
-                .setJoin(joinAsViewer)
-                .setSenderId(myId)
-                .build();
-
-        sendMessage(masterAddress, msg);
-
-        System.out.println("[GAME] Ex-master sent JoinMsg as VIEWER to new master " + newMaster.getId());
     }
 
     private void ensureDeputy() {
@@ -596,23 +535,26 @@ public class GameController {
 
         if (!hasDeputy) {
             for (Player player : gameState.getPlayers().values()) {
-                if (player.getRole() == NodeRole.NORMAL && player.getId() != myId && player.getAddress() != null) {
-                    player.setRole(NodeRole.DEPUTY);
-                    deputyAddress = player.getAddress();
+                if (player.getRole() == NodeRole.NORMAL && player.getId() != myId) {
+                    InetSocketAddress playerAddr = getPlayerAddress(player.getId());
+                    if (playerAddr != null) {
+                        player.setRole(NodeRole.DEPUTY);
+                        deputyAddress = playerAddr;
 
-                    SnakesProto.GameMessage.RoleChangeMsg roleChange = SnakesProto.GameMessage.RoleChangeMsg.newBuilder()
-                            .setReceiverRole(SnakesProto.NodeRole.DEPUTY)
-                            .build();
+                        SnakesProto.GameMessage.RoleChangeMsg roleChange = SnakesProto.GameMessage.RoleChangeMsg.newBuilder()
+                                .setReceiverRole(SnakesProto.NodeRole.DEPUTY)
+                                .build();
 
-                    sendMessage(player.getAddress(), SnakesProto.GameMessage.newBuilder()
-                            .setMsgSeq(msgSeqCounter.getAndIncrement())
-                            .setSenderId(myId)
-                            .setReceiverId(player.getId())
-                            .setRoleChange(roleChange)
-                            .build());
+                        sendMessage(playerAddr, SnakesProto.GameMessage.newBuilder()
+                                .setMsgSeq(msgSeqCounter.getAndIncrement())
+                                .setSenderId(myId)
+                                .setReceiverId(player.getId())
+                                .setRoleChange(roleChange)
+                                .build());
 
-                    System.out.println("Assigned DEPUTY role to player " + player.getId());
-                    break;
+                        System.out.println("[GAME] Assigned DEPUTY role to player " + player.getId());
+                        break;
+                    }
                 }
             }
         }
@@ -629,25 +571,30 @@ public class GameController {
 
         System.out.println("[GAME] Broadcasting state #" + gameState.getStateOrder());
 
+        int sent = 0;
         for (Player player : gameState.getPlayers().values()) {
             if (player.getId() == myId) {
-                System.out.println("[GAME]   Skip myself (ID=" + myId + ")");
-                continue;
-            }
-            if (player.getAddress() == null) {
-                System.out.println("[GAME]   Skip player " + player.getId() + " - no address");
                 continue;
             }
 
-            System.out.println("[GAME]   Sending to player " + player.getId() + " at " + player.getAddress());
+            InetSocketAddress playerAddr = getPlayerAddress(player.getId());
+            if (playerAddr == null) {
+                System.out.println("[GAME]   Player " + player.getId() + " - NO ADDRESS");
+                continue;
+            }
 
-            sendMessage(player.getAddress(), SnakesProto.GameMessage.newBuilder()
+            System.out.println("[GAME]   -> Player " + player.getId() + " at " + playerAddr);
+
+            sendMessage(playerAddr, SnakesProto.GameMessage.newBuilder()
                     .setMsgSeq(msgSeqCounter.getAndIncrement())
                     .setSenderId(myId)
                     .setReceiverId(player.getId())
                     .setState(stateMsg)
                     .build());
+            sent++;
         }
+
+        System.out.println("[GAME] Sent to " + sent + " players");
     }
 
     private void sendAnnouncement() {
@@ -663,7 +610,6 @@ public class GameController {
                             .build())
                     .build();
 
-            // Отправляем и multicast и broadcast для надёжности
             networkManager.sendMulticast(msg, MULTICAST_ADDRESS, MULTICAST_PORT);
             networkManager.sendBroadcast(msg, MULTICAST_PORT);
 
@@ -673,7 +619,10 @@ public class GameController {
     }
 
     private void sendMessage(InetSocketAddress address, SnakesProto.GameMessage msg) {
-        if (address == null) return;
+        if (address == null) {
+            System.err.println("[GAME] sendMessage: address is null!");
+            return;
+        }
 
         networkManager.send(msg, address);
 
@@ -689,7 +638,6 @@ public class GameController {
         long resendInterval = config.getStateDelayMs() / 10;
         long nodeTimeout = (long) (config.getStateDelayMs() * 0.8);
 
-        // Переотправка неподтверждённых сообщений
         Iterator<Map.Entry<Long, PendingMessage>> it = unackedMessages.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<Long, PendingMessage> entry = it.next();
@@ -706,7 +654,6 @@ public class GameController {
             }
         }
 
-        // Проверка timeout-ов игроков (только для MASTER)
         if (myRole == NodeRole.MASTER && gameState != null) {
             List<Integer> timedOut = new ArrayList<>();
 
@@ -729,22 +676,16 @@ public class GameController {
             }
         }
 
-        // Проверка timeout-а MASTER-а (для DEPUTY)
         if (myRole == NodeRole.DEPUTY && lastMasterActivity > 0) {
             if (now - lastMasterActivity > nodeTimeout * 3) {
-                System.out.println("[GAME] MASTER timeout detected, promoting myself to MASTER");
+                System.out.println("[GAME] MASTER timeout, promoting myself");
                 promoteToMaster();
             }
         }
 
-        // Проверка timeout-а MASTER-а (для NORMAL)
-        // УБИРАЕМ бесконечное переключение - просто ждём нового MASTER
         if (myRole == NodeRole.NORMAL && lastMasterActivity > 0) {
             if (now - lastMasterActivity > nodeTimeout * 5) {
-                // Только логируем, не переключаемся бесконечно
-                // Новый MASTER должен прислать нам RoleChangeMsg или StateMsg
-                System.out.println("[GAME] NORMAL: MASTER timeout, waiting for new MASTER...");
-                // Сбрасываем таймер чтобы не спамить
+                System.out.println("[GAME] NORMAL: MASTER timeout, waiting...");
                 lastMasterActivity = now;
             }
         }
@@ -756,9 +697,9 @@ public class GameController {
 
         System.out.println("[GAME] Player " + playerId + " timed out");
 
-        // Удаляем из processedJoins
-        if (player.getAddress() != null) {
-            processedJoins.remove(player.getAddress());
+        InetSocketAddress playerAddr = getPlayerAddress(playerId);
+        if (playerAddr != null) {
+            processedJoins.remove(playerAddr);
         }
 
         if (player.getRole() == NodeRole.DEPUTY) {
@@ -768,7 +709,6 @@ public class GameController {
         Snake snake = gameState.getSnake(playerId);
         if (snake != null && snake.getState() == Snake.SnakeState.ALIVE) {
             snake.setState(Snake.SnakeState.ZOMBIE);
-            System.out.println("[GAME] Snake of player " + playerId + " became ZOMBIE");
         }
 
         player.setRole(NodeRole.VIEWER);
@@ -778,52 +718,96 @@ public class GameController {
     }
 
     private void promoteToMaster() {
-        System.out.println("Promoting to MASTER");
+        System.out.println("[GAME] === PROMOTING TO MASTER ===");
+        System.out.println("[GAME] Known addresses:");
+        for (Map.Entry<Integer, InetSocketAddress> entry : knownPlayerAddresses.entrySet()) {
+            System.out.println("[GAME]   Player " + entry.getKey() + " -> " + entry.getValue());
+        }
+
         myRole = NodeRole.MASTER;
 
         if (gameState != null) {
+            Player me = gameState.getPlayer(myId);
+            if (me != null) {
+                me.setRole(NodeRole.MASTER);
+            }
+
+            long now = System.currentTimeMillis();
+            for (Player player : gameState.getPlayers().values()) {
+                if (player.getId() != myId) {
+                    playerLastActivity.put(player.getId(), now);
+                }
+            }
+
             for (Player player : gameState.getPlayers().values()) {
                 if (player.getId() == myId) continue;
-                if (player.getAddress() == null) continue;
+
+                InetSocketAddress playerAddr = getPlayerAddress(player.getId());
+                if (playerAddr == null) {
+                    System.out.println("[GAME] No address for player " + player.getId());
+                    continue;
+                }
 
                 SnakesProto.GameMessage.RoleChangeMsg.Builder roleChangeBuilder =
                         SnakesProto.GameMessage.RoleChangeMsg.newBuilder()
                                 .setSenderRole(SnakesProto.NodeRole.MASTER);
 
-                sendMessage(player.getAddress(), SnakesProto.GameMessage.newBuilder()
+                sendMessage(playerAddr, SnakesProto.GameMessage.newBuilder()
                         .setMsgSeq(msgSeqCounter.getAndIncrement())
                         .setSenderId(myId)
                         .setReceiverId(player.getId())
                         .setRoleChange(roleChangeBuilder.build())
                         .build());
+
+                System.out.println("[GAME] Notified player " + player.getId());
             }
         }
+
+        masterAddress = null;
+        deputyAddress = null;
 
         startGameLoop();
         startAnnouncement();
         ensureDeputy();
+
+        if (gameState != null) {
+            broadcastState();
+        }
+
+        System.out.println("[GAME] I am now MASTER");
     }
 
     private void updatePlayerActivity(int playerId) {
         playerLastActivity.put(playerId, System.currentTimeMillis());
+    }
 
-        if (gameState != null) {
-            Player player = gameState.getPlayer(playerId);
-            if (player != null) {
-                player.updateActivity();
-            }
+    // Сохраняем реальный адрес (от входящего пакета) - имеет приоритет
+    private void updatePlayerAddressFromPacket(int playerId, InetSocketAddress address) {
+        if (address == null || playerId <= 0) return;
+        knownPlayerAddresses.put(playerId, address);
+        System.out.println("[GAME] Address from packet: player " + playerId + " -> " + address);
+    }
+
+    // Сохраняем адрес из proto (если нет реального)
+    private void updatePlayerAddressFromProto(int playerId, InetSocketAddress address) {
+        if (address == null || playerId <= 0) return;
+        // Только если ещё не знаем адрес этого игрока
+        if (!knownPlayerAddresses.containsKey(playerId)) {
+            knownPlayerAddresses.put(playerId, address);
+            System.out.println("[GAME] Address from proto: player " + playerId + " -> " + address);
         }
     }
 
     private void handleMessage(SnakesProto.GameMessage msg, InetSocketAddress sender) {
         try {
-            // Обновляем активность отправителя
-            if (msg.hasSenderId()) {
+            // Сохраняем реальный адрес отправителя
+            if (msg.hasSenderId() && msg.getSenderId() > 0) {
+                updatePlayerAddressFromPacket(msg.getSenderId(), sender);
                 updatePlayerActivity(msg.getSenderId());
             }
 
             if (msg.hasAck()) {
-                handleAck(msg);
+                handleAck(msg, sender);
             } else if (msg.hasAnnouncement()) {
                 handleAnnouncement(msg, sender);
             } else if (msg.hasJoin()) {
@@ -846,16 +830,16 @@ public class GameController {
         }
     }
 
-    private void handleAck(SnakesProto.GameMessage msg) {
+    private void handleAck(SnakesProto.GameMessage msg, InetSocketAddress sender) {
         unackedMessages.remove(msg.getMsgSeq());
 
-        // Если это ответ на JoinMsg - сохраняем свой ID (только если ещё не установлен)
         if (msg.hasReceiverId() && msg.getReceiverId() > 0 && myId <= 0) {
             myId = msg.getReceiverId();
             System.out.println("[GAME] Received my ID: " + myId);
         }
 
-        if (msg.hasSenderId()) {
+        if (msg.hasSenderId() && msg.getSenderId() > 0) {
+            updatePlayerAddressFromPacket(msg.getSenderId(), sender);
             updatePlayerActivity(msg.getSenderId());
         }
     }
@@ -870,8 +854,6 @@ public class GameController {
                     ann.getCanJoin()
             );
             availableGames.put(ann.getGameName(), info);
-
-            System.out.println("Found game: " + ann.getGameName() + " at " + sender);
         }
 
         if (gamesListCallback != null) {
@@ -883,58 +865,53 @@ public class GameController {
         if (myRole != NodeRole.MASTER) return;
 
         SnakesProto.GameMessage.JoinMsg join = msg.getJoin();
+        System.out.println("[GAME] ========================================");
+        System.out.println("[GAME] Join request received!");
+        System.out.println("[GAME] Sender address from packet: " + sender);
+        System.out.println("[GAME] Sender IP: " + sender.getAddress().getHostAddress());
+        System.out.println("[GAME] Sender port: " + sender.getPort());
+        System.out.println("[GAME] Player name: " + join.getPlayerName());
+        System.out.println("[GAME] ========================================");
+        System.out.println("[GAME] Join from " + sender + ", name=" + join.getPlayerName());
 
-        System.out.println("[GAME] Join request from " + sender + ", name: " + join.getPlayerName());
-
-        // Проверяем существующего игрока с этого адреса
         Integer existingPlayerId = processedJoins.get(sender);
         if (existingPlayerId != null) {
             Player existingPlayer = gameState.getPlayer(existingPlayerId);
+            if (existingPlayer != null && existingPlayer.getRole() != NodeRole.VIEWER) {
+                sendAck(sender, msg.getMsgSeq(), myId, existingPlayerId);
+                return;
+            }
+        }
+
+        if (msg.hasSenderId() && msg.getSenderId() > 0) {
+            int senderId = msg.getSenderId();
+            Player existingPlayer = gameState.getPlayer(senderId);
 
             if (existingPlayer != null) {
-                // Если игрок активен (не VIEWER) - просто переотправляем ACK
-                if (existingPlayer.getRole() != NodeRole.VIEWER) {
-                    System.out.println("[GAME] Player " + existingPlayerId + " already active, resending ACK");
-                    sendAck(sender, msg.getMsgSeq(), myId, existingPlayerId);
-                    return;
+                System.out.println("[GAME] Reconnecting player " + senderId);
+                knownPlayerAddresses.put(senderId, sender);
+                playerLastActivity.put(senderId, System.currentTimeMillis());
+                processedJoins.put(sender, senderId);
+
+                if (join.getRequestedRole() == SnakesProto.NodeRole.VIEWER) {
+                    existingPlayer.setRole(NodeRole.VIEWER);
                 }
 
-                // Если игрок был VIEWER - удаляем его и создаём нового
-                System.out.println("[GAME] Player " + existingPlayerId + " was VIEWER, removing for rejoin");
-                gameState.removePlayer(existingPlayerId);
-                playerLastActivity.remove(existingPlayerId);
-                processedJoins.remove(sender);
-            } else {
-                // Игрока нет в состоянии - очищаем запись
-                processedJoins.remove(sender);
+                sendAck(sender, msg.getMsgSeq(), myId, senderId);
+
+                SnakesProto.GameMessage.StateMsg stateMsg = SnakesProto.GameMessage.StateMsg.newBuilder()
+                        .setState(buildProtoState())
+                        .build();
+                sendMessage(sender, SnakesProto.GameMessage.newBuilder()
+                        .setMsgSeq(msgSeqCounter.getAndIncrement())
+                        .setSenderId(myId)
+                        .setReceiverId(senderId)
+                        .setState(stateMsg)
+                        .build());
+                return;
             }
         }
 
-        // Также проверяем всех игроков по адресу (на случай если адрес изменился в processedJoins)
-        List<Integer> toRemove = new ArrayList<>();
-        for (Player existingPlayer : gameState.getPlayers().values()) {
-            if (existingPlayer.getAddress() != null && existingPlayer.getAddress().equals(sender)) {
-                if (existingPlayer.getRole() != NodeRole.VIEWER) {
-                    // Активный игрок - отправляем ACK
-                    System.out.println("[GAME] Found active player " + existingPlayer.getId() + " at same address");
-                    processedJoins.put(sender, existingPlayer.getId());
-                    sendAck(sender, msg.getMsgSeq(), myId, existingPlayer.getId());
-                    return;
-                } else {
-                    // VIEWER - помечаем на удаление
-                    toRemove.add(existingPlayer.getId());
-                }
-            }
-        }
-
-        // Удаляем старых VIEWER с этого адреса
-        for (int id : toRemove) {
-            System.out.println("[GAME] Removing old VIEWER " + id + " for rejoin");
-            gameState.removePlayer(id);
-            playerLastActivity.remove(id);
-        }
-
-        // Создаём нового игрока
         if (join.getRequestedRole() == SnakesProto.NodeRole.NORMAL ||
                 join.getRequestedRole() == SnakesProto.NodeRole.VIEWER) {
 
@@ -942,12 +919,12 @@ public class GameController {
             NodeRole role = fromProtoRole(join.getRequestedRole());
 
             Player newPlayer = new Player(newId, join.getPlayerName(), role);
-            newPlayer.setAddress(sender);
             gameState.addPlayer(newPlayer);
             playerLastActivity.put(newId, System.currentTimeMillis());
             processedJoins.put(sender, newId);
+            knownPlayerAddresses.put(newId, sender);
 
-            System.out.println("[GAME] Created new player " + newId + " (" + role + ") at " + sender);
+            System.out.println("[GAME] New player " + newId + " (" + role + ") at " + sender);
 
             if (role != NodeRole.VIEWER) {
                 Snake snake = gameLogic.createSnakeForPlayer(gameState, newId);
@@ -955,16 +932,15 @@ public class GameController {
                     gameState.removePlayer(newId);
                     playerLastActivity.remove(newId);
                     processedJoins.remove(sender);
+                    knownPlayerAddresses.remove(newId);
                     sendError(sender, "No room for new snake", msg.getMsgSeq());
                     return;
                 }
                 gameState.addSnake(snake);
-                System.out.println("[GAME] Created snake for player " + newId);
             }
 
             sendAck(sender, msg.getMsgSeq(), myId, newId);
 
-            // Отправляем состояние
             SnakesProto.GameMessage.StateMsg stateMsg = SnakesProto.GameMessage.StateMsg.newBuilder()
                     .setState(buildProtoState())
                     .build();
@@ -975,8 +951,6 @@ public class GameController {
                     .setReceiverId(newId)
                     .setState(stateMsg)
                     .build());
-
-            System.out.println("[GAME] Player " + newId + " joined successfully");
 
             ensureDeputy();
         }
@@ -995,46 +969,39 @@ public class GameController {
     }
 
     private void handleState(SnakesProto.GameMessage msg, InetSocketAddress sender) {
-        System.out.println("[GAME] handleState called, myRole=" + myRole);
         if (myRole == NodeRole.MASTER) {
-            System.out.println("[GAME] Ignoring state - I am MASTER");
             sendAck(sender, msg.getMsgSeq(), myId, msg.getSenderId());
             return;
         }
 
         lastMasterActivity = System.currentTimeMillis();
+        masterAddress = sender;
 
         SnakesProto.GameState protoState = msg.getState().getState();
 
-        // Игнорируем старые состояния
         if (gameState != null && protoState.getStateOrder() <= gameState.getStateOrder()) {
             sendAck(sender, msg.getMsgSeq(), myId, msg.getSenderId());
             return;
         }
 
-        System.out.println("[GAME] Received state #" + protoState.getStateOrder() + " from " + sender);
+        System.out.println("[GAME] State #" + protoState.getStateOrder() + " from " + sender);
 
-        // Парсим новое состояние
         gameState = fromProtoState(protoState, config != null ? config : GameConfig.defaultConfig());
-        masterAddress = sender;
 
-        // Синхронизируем свою роль с состоянием (но доверяем локальной если мы VIEWER после смерти)
+        // Синхронизируем роль
         if (myId > 0) {
             Player me = gameState.getPlayer(myId);
-            if (me != null) {
-                // Если в состоянии другая роль - обновляем
-                if (myRole != me.getRole()) {
-                    System.out.println("[GAME] Syncing role from state: " + myRole + " -> " + me.getRole());
-                    myRole = me.getRole();
-                }
+            if (me != null && myRole != me.getRole()) {
+                System.out.println("[GAME] Role sync: " + myRole + " -> " + me.getRole());
+                myRole = me.getRole();
             }
         }
 
-        // Находим DEPUTY
+        // Обновляем DEPUTY адрес
         deputyAddress = null;
         for (Player p : gameState.getPlayers().values()) {
-            if (p.getRole() == NodeRole.DEPUTY && p.getAddress() != null && p.getId() != myId) {
-                deputyAddress = p.getAddress();
+            if (p.getRole() == NodeRole.DEPUTY && p.getId() != myId) {
+                deputyAddress = getPlayerAddress(p.getId());
                 break;
             }
         }
@@ -1050,7 +1017,6 @@ public class GameController {
         if (msg.hasSenderId()) {
             updatePlayerActivity(msg.getSenderId());
         }
-
         sendAck(sender, msg.getMsgSeq(), myId, msg.hasSenderId() ? msg.getSenderId() : 0);
     }
 
@@ -1059,75 +1025,55 @@ public class GameController {
 
         System.out.println("[GAME] RoleChange from " + sender +
                 ": senderRole=" + (roleChange.hasSenderRole() ? roleChange.getSenderRole() : "none") +
-                ", receiverRole=" + (roleChange.hasReceiverRole() ? roleChange.getReceiverRole() : "none") +
-                ", senderId=" + (msg.hasSenderId() ? msg.getSenderId() : "none") +
-                ", receiverId=" + (msg.hasReceiverId() ? msg.getReceiverId() : "none"));
+                ", receiverRole=" + (roleChange.hasReceiverRole() ? roleChange.getReceiverRole() : "none"));
 
-        // Проверяем что сообщение адресовано нам
         if (msg.hasReceiverId() && msg.getReceiverId() != myId) {
-            System.out.println("[GAME] RoleChange not for me (I am " + myId + "), ignoring");
             if (msg.hasSenderId()) {
                 sendAck(sender, msg.getMsgSeq(), myId, msg.getSenderId());
             }
             return;
         }
 
-        // Обновляем адрес отправителя
-        if (msg.hasSenderId() && gameState != null) {
-            Player senderPlayer = gameState.getPlayer(msg.getSenderId());
-            if (senderPlayer != null) {
-                senderPlayer.setAddress(sender);
-                playerLastActivity.put(msg.getSenderId(), System.currentTimeMillis());
-            }
-        }
-
         boolean needsUiUpdate = false;
 
-        // Обработка изменения МОЕЙ роли
         if (roleChange.hasReceiverRole()) {
             NodeRole newRole = fromProtoRole(roleChange.getReceiverRole());
             NodeRole oldRole = myRole;
 
-            System.out.println("[GAME] My role changing: " + oldRole + " -> " + newRole);
+            System.out.println("[GAME] My role: " + oldRole + " -> " + newRole);
             myRole = newRole;
             needsUiUpdate = true;
 
             if (newRole == NodeRole.MASTER && oldRole != NodeRole.MASTER) {
-                System.out.println("[GAME] === I AM NOW THE MASTER ===");
+                System.out.println("[GAME] === BECOMING MASTER ===");
+                System.out.println("[GAME] Known addresses:");
+                for (Map.Entry<Integer, InetSocketAddress> entry : knownPlayerAddresses.entrySet()) {
+                    System.out.println("[GAME]   " + entry.getKey() + " -> " + entry.getValue());
+                }
 
                 if (gameState != null) {
-                    // Обновляем свою роль
                     Player me = gameState.getPlayer(myId);
                     if (me != null) {
                         me.setRole(NodeRole.MASTER);
-
-                        // Сохраняем свой адрес если его нет
-                        if (me.getAddress() == null) {
-                            try {
-                                int myPort = networkManager.getLocalPort();
-                                java.net.InetAddress localAddr = java.net.InetAddress.getLocalHost();
-                                me.setAddress(new InetSocketAddress(localAddr, myPort));
-                                System.out.println("[GAME] Set my address: " + me.getAddress());
-                            } catch (Exception e) {
-                                System.err.println("[GAME] Failed to set my address");
-                            }
-                        }
                     }
 
-                    // Старый MASTER -> VIEWER
                     if (msg.hasSenderId() && msg.getSenderId() != myId) {
                         Player oldMaster = gameState.getPlayer(msg.getSenderId());
                         if (oldMaster != null) {
                             oldMaster.setRole(NodeRole.VIEWER);
-                            System.out.println("[GAME] Old MASTER " + msg.getSenderId() + " -> VIEWER");
                         }
                     }
 
-                    // Все другие DEPUTY -> NORMAL (только один MASTER)
                     for (Player player : gameState.getPlayers().values()) {
                         if (player.getId() != myId && player.getRole() == NodeRole.DEPUTY) {
                             player.setRole(NodeRole.NORMAL);
-                            System.out.println("[GAME] Reset DEPUTY " + player.getId() + " -> NORMAL");
+                        }
+                    }
+
+                    long now = System.currentTimeMillis();
+                    for (Player player : gameState.getPlayers().values()) {
+                        if (player.getId() != myId) {
+                            playerLastActivity.put(player.getId(), now);
                         }
                     }
                 }
@@ -1139,39 +1085,32 @@ public class GameController {
                 startAnnouncement();
                 ensureDeputy();
 
-                // Рассылаем обновлённое состояние
                 if (gameState != null) {
+                    System.out.println("[GAME] Broadcasting first state as MASTER");
                     broadcastState();
                 }
 
             } else if (newRole == NodeRole.DEPUTY) {
-                System.out.println("[GAME] I am now DEPUTY");
                 if (gameState != null) {
                     Player me = gameState.getPlayer(myId);
-                    if (me != null) {
-                        me.setRole(NodeRole.DEPUTY);
-                    }
+                    if (me != null) me.setRole(NodeRole.DEPUTY);
                 }
 
             } else if (newRole == NodeRole.VIEWER) {
-                System.out.println("[GAME] I am now VIEWER");
                 if (gameState != null) {
                     Player me = gameState.getPlayer(myId);
-                    if (me != null) {
-                        me.setRole(NodeRole.VIEWER);
-                    }
+                    if (me != null) me.setRole(NodeRole.VIEWER);
                 }
             }
         }
 
-        // Обработка роли отправителя
         if (roleChange.hasSenderRole()) {
             SnakesProto.NodeRole senderRole = roleChange.getSenderRole();
 
             if (senderRole == SnakesProto.NodeRole.MASTER) {
                 masterAddress = sender;
                 lastMasterActivity = System.currentTimeMillis();
-                System.out.println("[GAME] MASTER address: " + sender);
+                System.out.println("[GAME] New MASTER at " + sender);
 
                 if (msg.hasSenderId() && gameState != null) {
                     Player masterPlayer = gameState.getPlayer(msg.getSenderId());
@@ -1182,7 +1121,6 @@ public class GameController {
                 needsUiUpdate = true;
 
             } else if (senderRole == SnakesProto.NodeRole.VIEWER) {
-                // Кто-то выходит
                 if (myRole == NodeRole.MASTER && msg.hasSenderId()) {
                     handlePlayerLeave(msg.getSenderId());
                     needsUiUpdate = true;
@@ -1190,7 +1128,6 @@ public class GameController {
             }
         }
 
-        // Обновляем UI
         if (needsUiUpdate && stateUpdateCallback != null && gameState != null) {
             stateUpdateCallback.accept(gameState);
         }
@@ -1201,7 +1138,7 @@ public class GameController {
     }
 
     private void handleError(SnakesProto.GameMessage msg) {
-        System.err.println("Error from server: " + msg.getError().getErrorMessage());
+        System.err.println("[GAME] Error: " + msg.getError().getErrorMessage());
         if (errorCallback != null) {
             errorCallback.accept(msg.getError().getErrorMessage());
         }
@@ -1230,9 +1167,9 @@ public class GameController {
 
         System.out.println("[GAME] Player " + playerId + " leaving");
 
-        // Удаляем из processedJoins
-        if (player.getAddress() != null) {
-            processedJoins.remove(player.getAddress());
+        InetSocketAddress playerAddr = getPlayerAddress(playerId);
+        if (playerAddr != null) {
+            processedJoins.remove(playerAddr);
         }
 
         Snake snake = gameState.getSnake(playerId);
@@ -1271,7 +1208,7 @@ public class GameController {
         networkManager.send(error, address);
     }
 
-    // ========== Proto conversion methods ==========
+    // ========== Proto conversion ==========
 
     private SnakesProto.GameState buildProtoState() {
         SnakesProto.GameState.Builder builder = SnakesProto.GameState.newBuilder()
@@ -1310,9 +1247,11 @@ public class GameController {
                     .setRole(toProtoRole(player.getRole()))
                     .setScore(player.getScore());
 
-            if (player.getAddress() != null) {
-                playerBuilder.setIpAddress(player.getAddress().getAddress().getHostAddress());
-                playerBuilder.setPort(player.getAddress().getPort());
+            // ВАЖНО: Включаем адреса в proto для передачи DEPUTY
+            InetSocketAddress addr = getPlayerAddress(player.getId());
+            if (addr != null) {
+                playerBuilder.setIpAddress(addr.getAddress().getHostAddress());
+                playerBuilder.setPort(addr.getPort());
             }
 
             playersBuilder.addPlayers(playerBuilder.build());
@@ -1326,13 +1265,12 @@ public class GameController {
         SnakesProto.GamePlayers.Builder playersBuilder = SnakesProto.GamePlayers.newBuilder();
         for (Player player : gameState.getPlayers().values()) {
             if (player.getRole() != NodeRole.VIEWER) {
-                SnakesProto.GamePlayer.Builder playerBuilder = SnakesProto.GamePlayer.newBuilder()
+                playersBuilder.addPlayers(SnakesProto.GamePlayer.newBuilder()
                         .setId(player.getId())
                         .setName(player.getName())
                         .setRole(toProtoRole(player.getRole()))
-                        .setScore(player.getScore());
-
-                playersBuilder.addPlayers(playerBuilder.build());
+                        .setScore(player.getScore())
+                        .build());
             }
         }
 
@@ -1354,6 +1292,7 @@ public class GameController {
     private GameState fromProtoState(SnakesProto.GameState protoState, GameConfig config) {
         GameState state = new GameState(config);
         state.setStateOrder(protoState.getStateOrder());
+
         for (SnakesProto.GameState.Snake protoSnake : protoState.getSnakesList()) {
             List<Coord> keyPoints = new ArrayList<>();
             for (SnakesProto.GameState.Coord coord : protoSnake.getPointsList()) {
@@ -1381,16 +1320,20 @@ public class GameController {
                     fromProtoRole(protoPlayer.getRole())
             );
             player.setScore(protoPlayer.getScore());
+            state.addPlayer(player);
 
-            if (protoPlayer.hasIpAddress() && protoPlayer.hasPort()) {
+            // КРИТИЧНО: Сохраняем адреса из proto (для DEPUTY)
+            if (protoPlayer.hasIpAddress() && protoPlayer.hasPort() &&
+                    !protoPlayer.getIpAddress().isEmpty()) {
                 try {
-                    player.setAddress(new InetSocketAddress(
-                            protoPlayer.getIpAddress(), protoPlayer.getPort()));
-                } catch (Exception ignored) {
+                    InetSocketAddress addr = new InetSocketAddress(
+                            protoPlayer.getIpAddress(), protoPlayer.getPort());
+                    // Используем updatePlayerAddressFromProto - не перезаписывает реальные адреса
+                    updatePlayerAddressFromProto(protoPlayer.getId(), addr);
+                } catch (Exception e) {
+                    System.err.println("[GAME] Failed to parse address: " + e.getMessage());
                 }
             }
-
-            state.addPlayer(player);
         }
 
         return state;
@@ -1441,8 +1384,6 @@ public class GameController {
         };
     }
 
-    // ========== Helper classes ==========
-
     private static class PendingMessage {
         final SnakesProto.GameMessage message;
         final InetSocketAddress address;
@@ -1475,28 +1416,11 @@ public class GameController {
             this.lastSeen = System.currentTimeMillis();
         }
 
-        public String getName() {
-            return name;
-        }
-
-        public InetSocketAddress getMasterAddress() {
-            return masterAddress;
-        }
-
-        public GameConfig getConfig() {
-            return config;
-        }
-
-        public int getPlayerCount() {
-            return playerCount;
-        }
-
-        public boolean canJoin() {
-            return canJoin;
-        }
-
-        public long getLastSeen() {
-            return lastSeen;
-        }
+        public String getName() { return name; }
+        public InetSocketAddress getMasterAddress() { return masterAddress; }
+        public GameConfig getConfig() { return config; }
+        public int getPlayerCount() { return playerCount; }
+        public boolean canJoin() { return canJoin; }
+        public long getLastSeen() { return lastSeen; }
     }
 }
