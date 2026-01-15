@@ -427,12 +427,7 @@ public class NetworkManager {
         }
     }
 
-    public int getLocalPort() {
-        DatagramSocket socket = unicastSocket;
-        return socket != null ? socket.getLocalPort() : 0;
-    }
 
-    public InetAddress getLocalAddress() {
-        return preferredLocalAddress;
-    }
+
+
 }
