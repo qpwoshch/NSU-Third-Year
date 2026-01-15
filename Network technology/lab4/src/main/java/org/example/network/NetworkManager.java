@@ -31,9 +31,7 @@ public class NetworkManager {
         System.out.println("[NET] Preferred local address: " + preferredLocalAddress);
     }
 
-    /**
-     * Находит предпочтительный локальный адрес (не виртуальный)
-     */
+
     private InetAddress findPreferredLocalAddress() {
         try {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
@@ -244,9 +242,6 @@ public class NetworkManager {
         }
     }
 
-    /**
-     * Возвращает только физические (не виртуальные) интерфейсы
-     */
     private List<NetworkInterface> getPhysicalMulticastInterfaces() {
         List<NetworkInterface> result = new ArrayList<>();
         try {

@@ -10,7 +10,7 @@ public class Snake {
     }
 
     private final int playerId;
-    private List<Coord> keyPoints; // Первая точка - голова, остальные - смещения
+    private List<Coord> keyPoints;
     private SnakeState state;
     private Direction headDirection;
 
