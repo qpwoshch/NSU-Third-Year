@@ -610,7 +610,6 @@ public class GameController {
                     .build();
 
             networkManager.sendMulticast(msg, MULTICAST_ADDRESS, MULTICAST_PORT);
-            networkManager.sendBroadcast(msg, MULTICAST_PORT);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -642,10 +641,7 @@ public class GameController {
             Map.Entry<Long, PendingMessage> entry = it.next();
             PendingMessage pm = entry.getValue();
 
-            if (now - pm.createdTime > 5000) {
-                it.remove();
-                continue;
-            }
+
 
             if (now - pm.sentTime > resendInterval) {
                 networkManager.send(pm.message, pm.address);
@@ -665,7 +661,7 @@ public class GameController {
                     continue;
                 }
 
-                if (now - lastActivity > nodeTimeout * 3) {
+                if (now - lastActivity > nodeTimeout) {
                     timedOut.add(player.getId());
                 }
             }
@@ -676,14 +672,14 @@ public class GameController {
         }
 
         if (myRole == NodeRole.DEPUTY && lastMasterActivity > 0) {
-            if (now - lastMasterActivity > nodeTimeout * 3) {
+            if (now - lastMasterActivity > nodeTimeout) {
                 System.out.println("[GAME] MASTER timeout, promoting myself");
                 promoteToMaster();
             }
         }
 
         if (myRole == NodeRole.NORMAL && lastMasterActivity > 0) {
-            if (now - lastMasterActivity > nodeTimeout * 5) {
+            if (now - lastMasterActivity > nodeTimeout) {
                 System.out.println("[GAME] NORMAL: MASTER timeout, waiting...");
                 lastMasterActivity = now;
             }
