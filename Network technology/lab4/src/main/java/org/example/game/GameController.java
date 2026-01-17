@@ -25,7 +25,7 @@ public class GameController {
 
     private final NetworkManager networkManager;
     private final GameLogic gameLogic;
-
+    private final Map<Integer, Long> lastSentToPlayer = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler;
     private ScheduledFuture<?> gameLoopTask;
     private ScheduledFuture<?> announcementTask;
@@ -163,7 +163,7 @@ public class GameController {
         masterAddress = null;
         deputyAddress = null;
         lastMasterActivity = 0;
-
+        lastSentToPlayer.clear();
         pendingMoves.clear();
         unackedMessages.clear();
         playerLastActivity.clear();
@@ -624,6 +624,10 @@ public class GameController {
 
         networkManager.send(msg, address);
 
+        if (msg.hasReceiverId() && msg.getReceiverId() > 0) {
+            lastSentToPlayer.put(msg.getReceiverId(), System.currentTimeMillis());
+        }
+
         if (!msg.hasAck() && !msg.hasAnnouncement() && !msg.hasDiscover()) {
             unackedMessages.put(msg.getMsgSeq(), new PendingMessage(msg, address, System.currentTimeMillis()));
         }
@@ -635,13 +639,12 @@ public class GameController {
         long now = System.currentTimeMillis();
         long resendInterval = config.getStateDelayMs() / 10;
         long nodeTimeout = (long) (config.getStateDelayMs() * 0.8);
+        long pingInterval = config.getStateDelayMs();
 
         Iterator<Map.Entry<Long, PendingMessage>> it = unackedMessages.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<Long, PendingMessage> entry = it.next();
             PendingMessage pm = entry.getValue();
-
-
 
             if (now - pm.sentTime > resendInterval) {
                 networkManager.send(pm.message, pm.address);
@@ -653,16 +656,31 @@ public class GameController {
             List<Integer> timedOut = new ArrayList<>();
 
             for (Player player : gameState.getPlayers().values()) {
-                if (player.getId() == myId) continue;
+                int pid = player.getId();
+                if (pid == myId) continue;
 
-                Long lastActivity = playerLastActivity.get(player.getId());
+                Long lastActivity = playerLastActivity.get(pid);
                 if (lastActivity == null) {
-                    playerLastActivity.put(player.getId(), now);
+                    playerLastActivity.put(pid, now);
+                } else if (now - lastActivity > nodeTimeout) {
+                    timedOut.add(pid);
                     continue;
                 }
 
-                if (now - lastActivity > nodeTimeout) {
-                    timedOut.add(player.getId());
+                Long lastSent = lastSentToPlayer.get(pid);
+                if (lastSent == null || now - lastSent > pingInterval) {
+                    InetSocketAddress addr = getPlayerAddress(pid);
+                    if (addr != null) {
+                        SnakesProto.GameMessage ping = SnakesProto.GameMessage.newBuilder()
+                                .setMsgSeq(msgSeqCounter.getAndIncrement())
+                                .setSenderId(myId)
+                                .setReceiverId(pid)
+                                .setPing(SnakesProto.GameMessage.PingMsg.getDefaultInstance())
+                                .build();
+
+                        sendMessage(addr, ping);
+                        System.out.println("[PING] sent to player " + pid + " at " + addr);
+                    }
                 }
             }
 
@@ -708,6 +726,7 @@ public class GameController {
 
         player.setRole(NodeRole.VIEWER);
         playerLastActivity.remove(playerId);
+        lastSentToPlayer.remove(playerId);
 
         ensureDeputy();
     }
