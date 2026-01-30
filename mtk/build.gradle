@@ -1,0 +1,64 @@
+plugins {
+    id 'java'
+    id 'application'
+    // Плагин для ANTLR — обязательно!
+    id 'antlr'
+}
+
+group = 'org.example'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+application {
+    mainClass = "org.example.Main"
+}
+
+run {
+    jvmArgs = [
+            '--module-path', 'C:/Users/User/all_projects/java/javafx-sdk-24/lib',
+            '--add-modules', 'javafx.controls,javafx.fxml'
+    ]
+}
+
+dependencies {
+    // JavaFX из локальной папки (как у тебя было)
+    implementation fileTree(dir: 'C:/Users/User/all_projects/java/javafx-sdk-24/lib', include: ['*.jar'])
+
+    // ANTLR runtime — нужен для работы сгенерированного парсера
+    implementation 'org.antlr:antlr4-runtime:4.13.2'
+
+    // ANTLR инструмент — только для генерации кода (не попадает в финальный jar)
+    antlr 'org.antlr:antlr4:4.13.2'
+
+    // Тесты
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+// === НАСТРОЙКА ANTLR ===
+// Где лежат .g4 файлы (стандартная папка)
+generateGrammarSource {
+    // Пакет для сгенерированных классов
+    arguments += ['-package', 'org.example']
+    // Дополнительно: генерировать visitor (удобно для будущего расширения)
+    arguments += ['-visitor']
+}
+
+// Куда класть сгенерированный код
+sourceSets {
+    main {
+        java {
+            srcDirs 'src/main/java', 'build/generated-src/antlr/main'
+        }
+    }
+}
+
+// Убедимся, что сначала генерируется ANTLR, потом компилируется Java
+compileJava.dependsOn generateGrammarSource
+
+test {
+    useJUnitPlatform()
+}
