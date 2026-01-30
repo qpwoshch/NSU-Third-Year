@@ -1,0 +1,10 @@
+/home/qpwoshch/cmake-3.29.0/bin/cmake -DCMAKE_BUILD_TYPE=Debug -G "Unix Makefiles" -S /home/qpwoshch/all_projects/OS/lab2/os/sync/2.3 -B /home/qpwoshch/all_projects/OS/lab2/os/sync/2.3/cmake-build-debug
+-- The C compiler identification is GNU 11.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Configuring done (1.6s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/qpwoshch/all_projects/OS/lab2/os/sync/2.3/cmake-build-debug
