@@ -28,6 +28,5 @@ public class Player {
     public int getScore() { return score; }
     public void setScore(int score) { this.score = score; }
     public void addScore(int delta) { this.score += delta; }
-    public long getLastActivity() { return lastActivity; }
-    public void updateActivity() { this.lastActivity = System.currentTimeMillis(); }
+
 }

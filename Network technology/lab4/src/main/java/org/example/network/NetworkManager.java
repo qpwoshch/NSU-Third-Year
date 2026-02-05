@@ -69,15 +69,7 @@ public class NetworkManager {
                     String ip = addr.getHostAddress();
 
                     if (ip.startsWith("127.") ||
-                            ip.startsWith("169.254.") ||
-                            ip.startsWith("172.16.") || ip.startsWith("172.17.") ||
-                            ip.startsWith("172.18.") || ip.startsWith("172.19.") ||
-                            ip.startsWith("172.20.") || ip.startsWith("172.21.") ||
-                            ip.startsWith("172.22.") || ip.startsWith("172.23.") ||
-                            ip.startsWith("172.24.") || ip.startsWith("172.25.") ||
-                            ip.startsWith("172.26.") || ip.startsWith("172.27.") ||
-                            ip.startsWith("172.28.") || ip.startsWith("172.29.") ||
-                            ip.startsWith("172.30.") || ip.startsWith("172.31.")) {
+                            ip.startsWith("169.254.")) {
                         continue;
                     }
 
@@ -242,6 +234,7 @@ public class NetworkManager {
         }
     }
 
+
     private List<NetworkInterface> getPhysicalMulticastInterfaces() {
         List<NetworkInterface> result = new ArrayList<>();
         try {
@@ -273,15 +266,9 @@ public class NetworkManager {
                         if (addr instanceof Inet4Address) {
                             String ip = addr.getHostAddress();
 
-                            if (ip.startsWith("172.16.") || ip.startsWith("172.17.") ||
-                                    ip.startsWith("172.18.") || ip.startsWith("172.19.") ||
-                                    ip.startsWith("172.20.") || ip.startsWith("172.21.") ||
-                                    ip.startsWith("172.22.") || ip.startsWith("172.23.") ||
-                                    ip.startsWith("172.24.") || ip.startsWith("172.25.") ||
-                                    ip.startsWith("172.26.") || ip.startsWith("172.27.") ||
-                                    ip.startsWith("172.28.") || ip.startsWith("172.29.") ||
-                                    ip.startsWith("172.30.") || ip.startsWith("172.31.")) {
-                                System.out.println("[NET] Skipping virtual IP range: " + ip);
+                            if (ip.startsWith("127.") ||
+                                    ip.startsWith("169.254.")) {
+                                System.out.println("[NET] Skipping special IP range: " + ip);
                                 continue;
                             }
 
@@ -337,19 +324,7 @@ public class NetworkManager {
         }
     }
 
-    public void sendBroadcast(SnakesProto.GameMessage message, int port) {
-        DatagramSocket socket = unicastSocket;
-        if (socket == null || socket.isClosed()) return;
 
-        try {
-            byte[] data = message.toByteArray();
-            InetAddress broadcast = InetAddress.getByName("255.255.255.255");
-            DatagramPacket packet = new DatagramPacket(data, data.length, broadcast, port);
-            socket.send(packet);
-        } catch (IOException e) {
-            System.err.println("[NET] Failed to send broadcast: " + e.getMessage());
-        }
-    }
 
     private void receiveLoop() {
         byte[] buffer = new byte[65535];
@@ -426,8 +401,6 @@ public class NetworkManager {
             System.err.println("[NET] Failed to process packet: " + e.getMessage());
         }
     }
-
-
 
 
 }

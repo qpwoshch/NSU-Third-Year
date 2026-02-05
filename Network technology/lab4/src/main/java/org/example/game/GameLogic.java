@@ -8,7 +8,6 @@ public class GameLogic {
 
     private final Random random = new Random();
 
-
     public List<Integer> tick(GameState state, Map<Integer, Direction> pendingMoves) {
         List<Integer> deadPlayers = new ArrayList<>();
 
@@ -26,30 +25,50 @@ public class GameLogic {
         int height = state.getConfig().getHeight();
 
         Map<Integer, Coord> newHeads = new HashMap<>();
-        Map<Integer, Boolean> ateFood = new HashMap<>();
+        Map<Coord, List<Integer>> headsPerCell = new HashMap<>();
+        Set<Coord> foodCellsToRemove = new HashSet<>();
 
         for (Snake snake : state.getSnakes().values()) {
+            if (snake.getState() != Snake.SnakeState.ALIVE) continue;
+
             Coord oldHead = snake.getHead();
             Coord newHead = new Coord(
                     oldHead.getX() + snake.getHeadDirection().getDx(),
                     oldHead.getY() + snake.getHeadDirection().getDy()
             ).normalize(width, height);
 
-            boolean ate = state.getFoods().contains(newHead);
-            if (ate) {
-                state.getFoods().remove(newHead);
-                Player player = state.getPlayer(snake.getPlayerId());
+            newHeads.put(snake.getPlayerId(), newHead);
+            headsPerCell.computeIfAbsent(newHead, k -> new ArrayList<>()).add(snake.getPlayerId());
+
+            if (state.getFoods().contains(newHead)) {
+                foodCellsToRemove.add(newHead);
+            }
+        }
+
+        Map<Integer, Boolean> ateFood = new HashMap<>();
+
+        for (Map.Entry<Integer, Coord> entry : newHeads.entrySet()) {
+            int playerId = entry.getKey();
+            Coord head = entry.getValue();
+            boolean willEat = foodCellsToRemove.contains(head);
+            ateFood.put(playerId, willEat);
+
+            if (willEat) {
+                Player player = state.getPlayer(playerId);
                 if (player != null) {
                     player.addScore(1);
                 }
             }
+        }
 
-            newHeads.put(snake.getPlayerId(), newHead);
-            ateFood.put(snake.getPlayerId(), ate);
+        for (Coord c : foodCellsToRemove) {
+            state.getFoods().remove(c);
         }
 
         for (Snake snake : state.getSnakes().values()) {
-            snake.move(width, height, ateFood.get(snake.getPlayerId()));
+            if (snake.getState() != Snake.SnakeState.ALIVE) continue;
+            boolean grew = ateFood.getOrDefault(snake.getPlayerId(), false);
+            snake.move(width, height, grew);
         }
 
         Set<Integer> dead = new HashSet<>();
@@ -118,24 +137,32 @@ public class GameLogic {
         return deadPlayers;
     }
 
-
     public Snake createSnakeForPlayer(GameState state, int playerId) {
-        Coord center = state.findFreeSquare();
-        if (center == null) {
-            return null;
+        int width = state.getConfig().getWidth();
+        int height = state.getConfig().getHeight();
+        Set<Coord> occupiedByFood = new HashSet<>(state.getFoods());
+        Set<Coord> occupiedBySnakes = state.getOccupiedCells();
+
+        for (int attempt = 0; attempt < 100; attempt++) {
+            Coord center = state.findFreeSquare();
+            if (center == null) {
+                return null;
+            }
+
+            Direction[] directions = Direction.values();
+            Direction dir = directions[random.nextInt(directions.length)];
+
+            Coord tailPos = new Coord(
+                    center.getX() + dir.opposite().getDx(),
+                    center.getY() + dir.opposite().getDy()
+            ).normalize(width, height);
+
+            if (!occupiedByFood.contains(center) &&
+                    !occupiedByFood.contains(tailPos) &&
+                    !occupiedBySnakes.contains(tailPos)) {
+                return new Snake(playerId, center, dir);
+            }
         }
-
-        Direction[] directions = Direction.values();
-        Direction dir = directions[random.nextInt(directions.length)];
-
-        Coord tailPos = new Coord(
-                center.getX() + dir.opposite().getDx(),
-                center.getY() + dir.opposite().getDy()
-        ).normalize(state.getConfig().getWidth(), state.getConfig().getHeight());
-
-        state.getFoods().remove(center);
-        state.getFoods().remove(tailPos);
-
-        return new Snake(playerId, center, dir);
+        return null;
     }
 }
